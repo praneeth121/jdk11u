@@ -168,6 +168,7 @@ jint ShenandoahHeap::initialize() {
   //
 
   ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size, heap_alignment);
+
   initialize_reserved_region((HeapWord*)heap_rs.base(), (HeapWord*) (heap_rs.base() + heap_rs.size()));
   _heap_region = MemRegion((HeapWord*)heap_rs.base(), heap_rs.size() / HeapWordSize);
   _heap_region_special = heap_rs.special();
@@ -188,6 +189,10 @@ jint ShenandoahHeap::initialize() {
 #endif
 
   ReservedSpace sh_rs = heap_rs.first_part(max_byte_size);
+  tty->print_cr("heap_rs base: %p", heap_rs.base());
+  tty->print_cr("heap_rs size: %lu", heap_rs.size());
+  tty->print_cr("sh_rs base: %p", sh_rs.base());
+  tty->print_cr("sh_rs size: %lu", sh_rs.size());
   if (!_heap_region_special) {
     os::commit_memory_or_exit(sh_rs.base(), _initial_size, heap_alignment, false,
                               "Cannot commit heap memory");
