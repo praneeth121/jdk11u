@@ -40,7 +40,9 @@ private:
   char _oom_during_evac;
   ShenandoahSATBMarkQueue _satb_mark_queue;
   PLAB* _gclab;
+  PLAB* _remote_gclab;
   size_t _gclab_size;
+  size_t _remote_gclab_size;
   uint  _worker_id;
   double _paced_time;
 
@@ -50,6 +52,8 @@ private:
     _satb_mark_queue(&ShenandoahBarrierSet::satb_mark_queue_set()),
     _gclab(NULL),
     _gclab_size(0),
+    _remote_gclab(NULL),
+    _remote_gclab_size(0),
     _worker_id(INVALID_WORKER_ID),
     _paced_time(0) {
   }
@@ -114,20 +118,25 @@ public:
 
   static void initialize_gclab(Thread* thread) {
     assert (thread->is_Java_thread() || thread->is_Worker_thread(), "Only Java and GC worker threads are allowed to get GCLABs");
-    assert(data(thread)->_gclab == NULL, "Only initialize once");
     data(thread)->_gclab = new PLAB(PLAB::min_size());
     data(thread)->_gclab_size = 0;
+    assert(data(thread)->_remote_gclab == NULL, "Only initialize once");
+    data(thread)->_remote_gclab = new PLAB(PLAB::min_size());
+    data(thread)->_remote_gclab_size = 0;
   }
 
-  static PLAB* gclab(Thread* thread) {
+  static PLAB* gclab(Thread* thread, bool is_remote=false) {
+    if (is_remote) return data(thread)->_remote_gclab;
     return data(thread)->_gclab;
   }
 
-  static size_t gclab_size(Thread* thread) {
+  static size_t gclab_size(Thread* thread, bool is_remote=false) {
+    if (is_remote) return data(thread)->_remote_gclab_size;
     return data(thread)->_gclab_size;
   }
 
-  static void set_gclab_size(Thread* thread, size_t v) {
+  static void set_gclab_size(Thread* thread, size_t v, bool is_remote=false) {
+    if (is_remote) { data(thread)->_remote_gclab_size = v; return;}
     data(thread)->_gclab_size = v;
   }
 

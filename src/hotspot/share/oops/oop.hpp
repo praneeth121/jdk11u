@@ -56,6 +56,8 @@ class oopDesc {
   friend class VMStructs;
   friend class JVMCIVMStructs;
  private:
+  volatile size_t _access_counter;
+  volatile size_t _gc_epoch; // Contain initialize bit as first bit, the rest is gc_epoch
   volatile markOop _mark;
   union _metadata {
     Klass*      _klass;
@@ -63,6 +65,7 @@ class oopDesc {
   } _metadata;
 
  public:
+  static size_t static_gc_epoch;
   inline markOop  mark()          const;
   inline markOop  mark_raw()      const;
   inline markOop* mark_addr_raw() const;
@@ -79,6 +82,18 @@ class oopDesc {
   // objects during a GC) -- requires a valid klass pointer
   inline void init_mark();
   inline void init_mark_raw();
+
+  inline size_t access_counter_raw() const;
+  inline size_t access_counter_with_check() const;
+
+  inline size_t gc_epoch_raw() const;
+
+  inline void set_access_counter(size_t new_value);
+  static inline void set_access_counter(HeapWord* mem, size_t new_value);
+  inline void increase_access_counter();
+
+  inline void set_gc_epoch(size_t new_value);
+  static inline void set_gc_epoch(HeapWord* mem, size_t new_value);
 
   inline Klass* klass() const;
   inline Klass* klass_or_null() const volatile;
@@ -324,6 +339,8 @@ class oopDesc {
 
   // for code generation
   static int mark_offset_in_bytes()      { return offset_of(oopDesc, _mark); }
+  static int access_counter_offset_in_bytes() {return offset_of(oopDesc, _access_counter); }
+  static int gc_epoch_offset_in_bytes() {return offset_of(oopDesc, _gc_epoch); }
   static int klass_offset_in_bytes()     { return offset_of(oopDesc, _metadata._klass); }
   static int klass_gap_offset_in_bytes() {
     assert(has_klass_gap(), "only applicable to compressed klass pointers");

@@ -170,6 +170,7 @@ void create_new_mr(struct rdma_cm_id* id, size_t length, unsigned int access_fla
 COMM_CODE get_comm_code() {
 	int ret;
 	uint8_t code_buff[4]; // 4 byte buffer to get comm code
+	uint8_t rm_size_buff[8];
 	COMM_CODE code;
 	ret = rdma_post_recv(id, NULL, recv_msg, 16, mr);
 	if (ret) {
@@ -183,10 +184,17 @@ COMM_CODE get_comm_code() {
 	else
 		ret = 0;
 
-	memcpy(code_buff, recv_msg, 4);
+	memcpy(code_buff, recv_msg, sizeof(COMM_CODE));
 	code = (COMM_CODE)*code_buff;
 
-
+	if (code == REG_MR) {
+		printf("REG_MR code\n");
+		memcpy(rm_size_buff, recv_msg + sizeof(COMM_CODE), sizeof(size_t));
+		print_a_buffer(rm_size_buff, 8, "rm_size_buff");
+		printf("rm_size: %lu\n", *(size_t*)rm_size_buff);
+		rm_size = *(size_t*)rm_size_buff;
+		printf("rm_size: %lu\n", rm_size);
+	}
 
 	return code;
 }

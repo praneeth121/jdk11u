@@ -188,15 +188,50 @@ jint ShenandoahHeap::initialize() {
   }
 #endif
 
-  ReservedSpace sh_rs = heap_rs.first_part(max_byte_size);
-  tty->print_cr("heap_rs base: %p", heap_rs.base());
-  tty->print_cr("heap_rs size: %lu", heap_rs.size());
-  tty->print_cr("sh_rs base: %p", sh_rs.base());
-  tty->print_cr("sh_rs size: %lu", sh_rs.size());
-  if (!_heap_region_special) {
-    os::commit_memory_or_exit(sh_rs.base(), _initial_size, heap_alignment, false,
-                              "Cannot commit heap memory");
+  ReservedSpace sh_rs;
+  size_t remote_size = 0;
+  if (doEvacToRemote) {
+    // reserve the first (max_byte_size - 8GB) virtual mem to local
+    size_t num_uncommitted_regions = _num_regions - num_committed_regions;
+    
+    _num_remote_regions = work_out_num_remote_regions(num_uncommitted_regions, ShenandoahHeapRegion::region_size_words()*HeapWordSize);
+    remote_size = _num_remote_regions * ShenandoahHeapRegion::region_size_words()*HeapWordSize;
+
+    tty->print_cr("remote_size: %lu", remote_size);
+    tty->print_cr("local_size: %lu", max_byte_size - remote_size);
+
+    sh_rs = heap_rs.first_part(max_byte_size - remote_size);
+    tty->print_cr("heap_rs base: %p", heap_rs.base());
+    tty->print_cr("heap_rs size: %lu", heap_rs.size());
+    tty->print_cr("sh_rs base: %p", sh_rs.base());
+    tty->print_cr("sh_rs end: %p", sh_rs.end());
+    tty->print_cr("sh_rs size: %lu", sh_rs.size());
+    tty->print_cr("---------------------------------");
+    assert(_initial_size < max_byte_size - remote_size, "Invalid initial size");
+    if (!_heap_region_special) {
+      os::commit_memory_or_exit(sh_rs.base(), _initial_size, heap_alignment, false,
+                                "Cannot commit heap memory");
+    }
+
+    // Dat mod
+    // Reserve virtual mem for remote mem
+    ReservedSpace remote_rs = heap_rs.last_part(remote_size);
+    tty->print_cr("remote_rs base: %p", remote_rs.base());
+    tty->print_cr("remote_rs end: %p", remote_rs.end());
+    tty->print_cr("remote_rs size: %lu", remote_rs.size());
+    tty->print_cr("---------------------------------");
+    // init RDMA
+    
+    _remote_mem = new RemoteMem(this, (size_t)numRemoteMems, remote_rs);
+  } else {
+    tty->print_cr("Normal Heap ");
+    sh_rs = heap_rs.first_part(max_byte_size);
+    if (!_heap_region_special) {
+      os::commit_memory_or_exit(sh_rs.base(), _initial_size, heap_alignment, false,
+                                "Cannot commit heap memory");
+    }
   }
+
 
   //
   // Reserve and commit memory for bitmap(s)
@@ -241,6 +276,12 @@ jint ShenandoahHeap::initialize() {
                               "Cannot commit bitmap memory");
   }
 
+
+  tty->print_cr("bitmap base: %p", bitmap.base());
+  tty->print_cr("bitmap end: %p", bitmap.end());
+  tty->print_cr("bitmap size: %lu", bitmap.size());
+  tty->print_cr("---------------------------------");
+
   _marking_context = new ShenandoahMarkingContext(_heap_region, _bitmap_region, _num_regions);
 
   if (ShenandoahVerify) {
@@ -262,6 +303,13 @@ jint ShenandoahHeap::initialize() {
   _aux_bitmap_region_special = aux_bitmap.special();
   _aux_bit_map.initialize(_heap_region, _aux_bitmap_region);
 
+
+
+  tty->print_cr("aux_bitmap base: %p", aux_bitmap.base());
+  tty->print_cr("aux_bitmap end: %p", aux_bitmap.end());
+  tty->print_cr("aux_bitmap size: %lu", aux_bitmap.size());
+  tty->print_cr("---------------------------------");
+
   //
   // Create regions and region sets
   //
@@ -275,6 +323,12 @@ jint ShenandoahHeap::initialize() {
     os::commit_memory_or_exit(region_storage.base(), region_storage_size, region_page_size, false,
                               "Cannot commit region memory");
   }
+
+
+  tty->print_cr("region_storage base: %p", region_storage.base());
+  tty->print_cr("region_storage end: %p", region_storage.end());
+  tty->print_cr("region_storage size: %lu", region_storage.size());
+  tty->print_cr("---------------------------------");
 
   // Try to fit the collection set bitmap at lower addresses. This optimizes code generation for cset checks.
   // Go up until a sensible limit (subject to encoding constraints) and try to reserve the space there.
@@ -304,7 +358,22 @@ jint ShenandoahHeap::initialize() {
   }
 
   _regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _num_regions, mtGC);
-  _free_set = new ShenandoahFreeSet(this, _num_regions);
+
+  tty->print_cr("Num regions: %lu", _num_regions);
+  tty->print_cr("Num remote regions: %lu", _num_remote_regions);
+  tty->print_cr("Num local regions: %lu", _num_regions - _num_remote_regions);
+
+  _free_set = new ShenandoahFreeSet(this, _num_regions, _num_regions - _num_remote_regions);
+
+  tty->print_cr("num regions: %lu", _num_regions);
+  tty->print_cr("region size: %lu", ShenandoahHeapRegion::region_size_words()*HeapWordSize);
+  tty->print_cr("min_capacity: %lu", min_capacity());
+  tty->print_cr("max_capacity: %lu", max_capacity());
+  tty->print_cr("soft_max_capacity: %lu", soft_max_capacity());
+  tty->print_cr("initial_capacity: %lu", initial_capacity());
+  tty->print_cr("capacity: %lu", capacity());
+  tty->print_cr("used: %lu", used());
+  tty->print_cr("committed: %lu", committed());
 
   {
     ShenandoahHeapLocker locker(lock());
@@ -312,9 +381,10 @@ jint ShenandoahHeap::initialize() {
     for (size_t i = 0; i < _num_regions; i++) {
       HeapWord* start = (HeapWord*)sh_rs.base() + ShenandoahHeapRegion::region_size_words() * i;
       bool is_committed = i < num_committed_regions;
+      bool is_local = i < _num_regions - _num_remote_regions;
       void* loc = region_storage.base() + i * region_align;
 
-      ShenandoahHeapRegion* r = new (loc) ShenandoahHeapRegion(start, i, is_committed);
+      ShenandoahHeapRegion* r = new (loc) ShenandoahHeapRegion(start, i, is_committed, !is_local);
       assert(is_aligned(r, SHENANDOAH_CACHE_LINE_SIZE), "Sanity");
 
       _marking_context->initialize_top_at_mark_start(r);
@@ -400,6 +470,22 @@ jint ShenandoahHeap::initialize() {
                      SafepointMechanism::uses_thread_local_poll() ? "thread-local poll" :
                      (SafepointMechanism::uses_global_page_poll() ? "global-page poll" : "unknown"));
 
+  // print
+  size_t num_lregions = 0;
+  size_t num_rregions = 0;
+  for (size_t i = 0; i < _num_regions; i++) {
+    ShenandoahHeapRegion* r = _regions[i];
+    if (r->is_remote()) {
+      num_rregions++;
+    }
+    else {
+      num_lregions++;
+    }
+  }
+  tty->print_cr("num_lregions: %lu", num_lregions);
+  tty->print_cr("num_rregions: %lu", num_rregions);
+  tty->print_cr("--------------------------------");
+
   return JNI_OK;
 }
 
@@ -458,11 +544,13 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _used(0),
   _committed(0),
   _bytes_allocated_since_gc_start(0),
+  _remote_mem(NULL),
   _max_workers(MAX2(ConcGCThreads, ParallelGCThreads)),
   _workers(NULL),
   _safepoint_workers(NULL),
   _heap_region_special(false),
   _num_regions(0),
+  _num_remote_regions(0),
   _regions(NULL),
   _update_refs_iterator(this),
   _control_thread(NULL),
@@ -684,6 +772,14 @@ size_t ShenandoahHeap::max_capacity() const {
   return _num_regions * ShenandoahHeapRegion::region_size_bytes();
 }
 
+size_t ShenandoahHeap::local_capacity() const {
+  return (_num_regions - _num_remote_regions) * ShenandoahHeapRegion::region_size_bytes();
+}
+
+size_t ShenandoahHeap::remote_capacity() const {
+  return _num_remote_regions * ShenandoahHeapRegion::region_size_bytes();
+}
+
 size_t ShenandoahHeap::soft_max_capacity() const {
   size_t v = Atomic::load(&_soft_max_size);
   assert(min_capacity() <= v && v <= max_capacity(),
@@ -711,6 +807,22 @@ bool ShenandoahHeap::is_in(const void* p) const {
   HeapWord* heap_base = (HeapWord*) base();
   HeapWord* last_region_end = heap_base + ShenandoahHeapRegion::region_size_words() * num_regions();
   return p >= heap_base && p < last_region_end;
+}
+
+bool ShenandoahHeap::is_in_remote(const void* p) const {
+  if (!doEvacToRemote) return false;
+  HeapWord* remote_base = (HeapWord*)remote_mem()->base();
+  HeapWord* remote_end  = (HeapWord*)remote_mem()->end();
+  return p >= remote_base && p < remote_end;
+  // Mod this function
+  // HeapWord* heap_base = (HeapWord*) base();
+  // HeapWord* last_region_end = heap_base + ShenandoahHeapRegion::region_size_words() * num_regions();
+  // return p >= heap_base && p < last_region_end;
+}
+
+bool ShenandoahHeap::is_in_local(const void* p) const {
+  if (!doEvacToRemote) return true;
+  return is_in(p) && !is_in_remote(p);
 }
 
 void ShenandoahHeap::op_uncommit(double shrink_before, size_t shrink_until) {
@@ -743,19 +855,20 @@ void ShenandoahHeap::op_uncommit(double shrink_before, size_t shrink_until) {
   }
 }
 
-HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) {
+HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, bool is_remote) {
+  tty->print_cr("gclab slow allocation");
   // New object should fit the GCLAB size
   size_t min_size = MAX2(size, PLAB::min_size());
 
   // Figure out size of new GCLAB, looking back at heuristics. Expand aggressively.
-  size_t new_size = ShenandoahThreadLocalData::gclab_size(thread) * 2;
+  size_t new_size = ShenandoahThreadLocalData::gclab_size(thread, is_remote) * 2;
   new_size = MIN2(new_size, PLAB::max_size());
   new_size = MAX2(new_size, PLAB::min_size());
 
   // Record new heuristic value even if we take any shortcut. This captures
   // the case when moderately-sized objects always take a shortcut. At some point,
   // heuristics should catch up with them.
-  ShenandoahThreadLocalData::set_gclab_size(thread, new_size);
+  ShenandoahThreadLocalData::set_gclab_size(thread, new_size, is_remote);
 
   if (new_size < size) {
     // New size still does not fit the object. Fall back to shared allocation.
@@ -768,7 +881,7 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) 
   gclab->retire();
 
   size_t actual_size = 0;
-  HeapWord* gclab_buf = allocate_new_gclab(min_size, new_size, &actual_size);
+  HeapWord* gclab_buf = allocate_new_gclab(min_size, new_size, &actual_size, is_remote);
   if (gclab_buf == NULL) {
     return NULL;
   }
@@ -777,7 +890,13 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) 
 
   if (ZeroTLAB) {
     // ..and clear it.
-    Copy::zero_to_words(gclab_buf, actual_size);
+    tty->print_cr("Clearing GC lab buffer");
+    if (is_in_local(gclab_buf)){
+      Copy::zero_to_words(gclab_buf, actual_size);
+    } else {
+      assert(is_in_remote(gclab_buf), "Must be a remote address");
+      remote_mem()->zero_to_words(gclab_buf, actual_size);
+    }
   } else {
     // ...and zap just allocated object.
 #ifdef ASSERT
@@ -785,9 +904,17 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) 
     // ensure that the returned space is not considered parsable by
     // any concurrent GC thread.
     size_t hdr_size = oopDesc::header_size();
-    Copy::fill_to_words(gclab_buf + hdr_size, actual_size - hdr_size, badHeapWordVal);
+    tty->print_cr("Fill with bad heap word");
+    if (is_in_local(gclab_buf)) {
+      tty->print_cr("Is in local");
+      Copy::fill_to_words(gclab_buf + hdr_size, actual_size - hdr_size, badHeapWordVal);
+    } else {
+      tty->print_cr("Is in remote");
+      // Do nothing for now
+    }
 #endif // ASSERT
   }
+  tty->print_cr("Attach buffer to gclab");
   gclab->set_buf(gclab_buf, actual_size);
   return gclab->allocate(size);
 }
@@ -807,7 +934,9 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t min_size,
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t min_size,
                                              size_t word_size,
-                                             size_t* actual_size) {
+                                             size_t* actual_size,
+                                             bool is_remote) {
+  tty->print_cr("Allocating new gclab ... ");
   ShenandoahAllocRequest req = ShenandoahAllocRequest::for_gclab(min_size, word_size);
   HeapWord* res = allocate_memory(req);
   if (res != NULL) {
@@ -815,6 +944,8 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t min_size,
   } else {
     *actual_size = 0;
   }
+  tty->print_cr("New gclab %p: ", res);
+  tty->print_cr("-------------------------");
   return res;
 }
 

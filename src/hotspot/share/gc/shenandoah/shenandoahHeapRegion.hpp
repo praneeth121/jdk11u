@@ -198,6 +198,9 @@ public:
   bool is_cset()                   const { return _state == _cset   || _state == _pinned_cset; }
   bool is_pinned()                 const { return _state == _pinned || _state == _pinned_cset || _state == _pinned_humongous_start; }
 
+  bool is_remote()                 const { return _is_remote; }
+  bool is_local()                  const { return !_is_remote; }
+
   // Macro-properties:
   bool is_alloc_allowed()          const { return is_empty() || is_regular() || _state == _pinned; }
   bool is_stw_move_allowed()       const { return is_regular() || _state == _cset || (ShenandoahHumongousMoves && _state == _humongous_start); }
@@ -233,6 +236,7 @@ private:
 
   // Seldom updated fields
   RegionState _state;
+  bool _is_remote;
 
   // Frequently updated fields
   HeapWord* _top;
@@ -246,7 +250,7 @@ private:
   HeapWord* volatile _update_watermark;
 
 public:
-  ShenandoahHeapRegion(HeapWord* start, size_t index, bool committed);
+  ShenandoahHeapRegion(HeapWord* start, size_t index, bool committed, bool is_remote = false);
 
   static const size_t MIN_NUM_REGIONS = 10;
 

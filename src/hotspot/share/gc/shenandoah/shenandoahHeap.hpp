@@ -35,6 +35,8 @@
 #include "gc/shenandoah/shenandoahSharedVariables.hpp"
 #include "services/memoryManager.hpp"
 
+#include "memory/remoteMem.hpp"
+
 class ConcurrentGCTimer;
 class ReferenceProcessor;
 class ShenandoahCollectorPolicy;
@@ -156,6 +158,23 @@ public:
   void prepare_for_verify();
   void verify(VerifyOption vo);
 
+  static size_t work_out_num_remote_regions(size_t num_uncommitted_regions, size_t byte_region_size) {
+    // Carve out some regions in the uncommited regions and dedicate them to remote
+    size_t num_regions_per_remote_server = num_uncommitted_regions / (numRemoteMems + 1);
+    size_t expecting_num_regions_per_remote_server = RemoteSizeExpecting / byte_region_size;
+    size_t final_num_remote_regions_per_server = (((num_regions_per_remote_server) < (expecting_num_regions_per_remote_server)) ? (num_regions_per_remote_server) : (expecting_num_regions_per_remote_server));
+    size_t ret = final_num_remote_regions_per_server * numRemoteMems;
+    assert(ret < num_uncommitted_regions, "Must not be committed to initial local space");
+    return ret;
+    // return (((RemoteSizeExpecting) < (remote_size)) ? (RemoteSizeExpecting) : (remote_size));
+  }
+
+  // static size_t work_out_num_remote_regions(size_t heap_size, size_t num_local_regions, size_t byte_region_size) {
+  //   size_t num_local_regions = num_regions / (numRemoteMems + 1);
+  //   size_t remote_size = (num_regions - num_local_regions) * byte_region_size;
+  //   return (((RemoteSizeExpecting) < (remote_size)) ? (RemoteSizeExpecting) : (remote_size));
+  // }
+
 // ---------- Heap counters and metrics
 //
 private:
@@ -167,6 +186,8 @@ private:
   volatile size_t _committed;
   volatile size_t _bytes_allocated_since_gc_start;
   shenandoah_padding(1);
+
+  RemoteMem* _remote_mem;
 
 public:
   void increase_used(size_t bytes);
@@ -187,6 +208,8 @@ public:
   size_t capacity()          const;
   size_t used()              const;
   size_t committed()         const;
+  size_t local_capacity()         const;
+  size_t remote_capacity()         const;
 
   void set_soft_max_capacity(size_t v);
 
@@ -212,11 +235,15 @@ private:
   MemRegion _heap_region;
   bool      _heap_region_special;
   size_t    _num_regions;
+  size_t    _num_remote_regions;
   ShenandoahHeapRegion** _regions;
   ShenandoahRegionIterator _update_refs_iterator;
 
 public:
   inline size_t num_regions() const { return _num_regions; }
+  inline size_t num_remote_regions() const { return _num_remote_regions; }
+  inline size_t remote_starting_region_idx() const { return _num_regions - _num_remote_regions; }
+  inline size_t num_local_regions() const { return _num_regions - _num_remote_regions; }
   inline bool is_heap_region_special() { return _heap_region_special; }
 
   inline ShenandoahHeapRegion* const heap_region_containing(const void* addr) const;
@@ -440,6 +467,8 @@ public:
 
   ShenandoahPhaseTimings*    phase_timings()     const { return _phase_timings;     }
 
+  RemoteMem*                 remote_mem()        const { return _remote_mem; }
+
   ShenandoahVerifier*        verifier();
 
 // ---------- VM subsystem bindings
@@ -505,6 +534,8 @@ public:
   bool is_maximal_no_gc() const shenandoah_not_implemented_return(false);
 
   bool is_in(const void* p) const;
+  bool is_in_local(const void* p) const;
+  bool is_in_remote(const void* p) const;
 
   // All objects can potentially move
   bool is_scavengable(oop obj) { return true; };
@@ -555,9 +586,9 @@ public:
 //
 private:
   HeapWord* allocate_memory_under_lock(ShenandoahAllocRequest& request, bool& in_new_region);
-  inline HeapWord* allocate_from_gclab(Thread* thread, size_t size);
-  HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size);
-  HeapWord* allocate_new_gclab(size_t min_size, size_t word_size, size_t* actual_size);
+  inline HeapWord* allocate_from_gclab(Thread* thread, size_t size, bool is_remote=false);
+  HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size, bool is_remote=false);
+  HeapWord* allocate_new_gclab(size_t min_size, size_t word_size, size_t* actual_size, bool is_remote=false);
   void retire_and_reset_gclabs();
 
 public:

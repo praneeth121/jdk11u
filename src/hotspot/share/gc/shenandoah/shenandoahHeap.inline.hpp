@@ -49,6 +49,7 @@
 #include "utilities/copy.hpp"
 #include "utilities/globalDefinitions.hpp"
 
+
 inline ShenandoahHeap* ShenandoahHeap::heap() {
   assert(_heap != NULL, "Heap is not initialized yet");
   return _heap;
@@ -242,10 +243,11 @@ inline void ShenandoahHeap::clear_cancelled_gc() {
   _oom_evac_handler.clear();
 }
 
-inline HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size) {
+inline HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size, bool is_remote) {
   assert(UseTLAB, "TLABs should be enabled");
+  tty->print_cr("Allocating using gclab");
 
-  PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  PLAB* gclab = ShenandoahThreadLocalData::gclab(thread, is_remote);
   if (gclab == NULL) {
     assert(!thread->is_Java_thread() && !thread->is_Worker_thread(),
            "Performance: thread should have GCLAB: %s", thread->name());
@@ -257,7 +259,7 @@ inline HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size
     return obj;
   }
   // Otherwise...
-  return allocate_from_gclab_slow(thread, size);
+  return allocate_from_gclab_slow(thread, size, is_remote);
 }
 
 inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
@@ -284,6 +286,7 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 #endif
     if (UseTLAB) {
       copy = allocate_from_gclab(thread, size);
+      tty->print_cr("gclab allocation finished, copy = %p ", copy);
     }
     if (copy == NULL) {
       ShenandoahAllocRequest req = ShenandoahAllocRequest::for_shared_gc(size);
@@ -303,7 +306,11 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   // Copy the object:
-  Copy::aligned_disjoint_words((HeapWord*) p, copy, size);
+  if (is_in_local(copy)) {
+    Copy::aligned_disjoint_words((HeapWord*) p, copy, size);
+  } else {
+    remote_mem()->write(copy, (HeapWord*) p, size);
+  }
 
   // Try to install the new forwarding pointer.
   oop copy_val = oop(copy);
@@ -311,6 +318,7 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   if (result == copy_val) {
     // Successfully evacuated. Our copy is now the public one!
     shenandoah_assert_correct(NULL, copy_val);
+    tty->print_cr("Successfully evacuate the object");
     return copy_val;
   }  else {
     // Failed to evacuate. We need to deal with the object that is left behind. Since this

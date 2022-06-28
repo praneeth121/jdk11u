@@ -29,12 +29,16 @@
 #include "gc/shenandoah/shenandoahMarkingContext.inline.hpp"
 #include "logging/logStream.hpp"
 
-ShenandoahFreeSet::ShenandoahFreeSet(ShenandoahHeap* heap, size_t max_regions) :
+ShenandoahFreeSet::ShenandoahFreeSet(ShenandoahHeap* heap, size_t max_regions, size_t local_max_regions) :
   _heap(heap),
   _mutator_free_bitmap(max_regions, mtGC),
   _collector_free_bitmap(max_regions, mtGC),
-  _max(max_regions)
+  _max(max_regions),
+  _local_max(local_max_regions)
 {
+  tty->print_cr("_max regions: %lu", _max);
+  tty->print_cr("_local_max regions: %lu", _local_max);
+
   clear_internal();
 }
 
@@ -90,6 +94,7 @@ HeapWord* ShenandoahFreeSet::allocate_single(ShenandoahAllocRequest& req, bool& 
     }
     case ShenandoahAllocRequest::_alloc_gclab:
     case ShenandoahAllocRequest::_alloc_shared_gc: {
+      tty->print_cr("GC allocation in region ...");
       // size_t is unsigned, need to dodge underflow when _leftmost = 0
 
       // Fast-path: try to allocate in the collector view first
@@ -138,6 +143,8 @@ HeapWord* ShenandoahFreeSet::allocate_single(ShenandoahAllocRequest& req, bool& 
 
 HeapWord* ShenandoahFreeSet::try_allocate_in(ShenandoahHeapRegion* r, ShenandoahAllocRequest& req, bool& in_new_region) {
   assert (!has_no_alloc_capacity(r), "Performance: should avoid full regions on this path: " SIZE_FORMAT, r->index());
+
+  tty->print_cr("Try to allocate in region idx: %lu", r->index());
 
   try_recycle_trashed(r);
 
@@ -208,18 +215,28 @@ bool ShenandoahFreeSet::touches_bounds(size_t num) const {
 
 void ShenandoahFreeSet::recompute_bounds() {
   // Reset to the most pessimistic case:
-  _mutator_rightmost = _max - 1;
+  _mutator_rightmost = _local_max - 1;
   _mutator_leftmost = 0;
   _collector_rightmost = _max - 1;
   _collector_leftmost = 0;
 
   // ...and adjust from there
   adjust_bounds();
+  tty->print_cr("_mutator_rightmost: %lu", _mutator_rightmost);
+  tty->print_cr("_mutator_leftmost: %lu", _mutator_leftmost);
+  tty->print_cr("_collector_rightmost: %lu", _collector_rightmost);
+  tty->print_cr("_collector_leftmost: %lu", _collector_leftmost);
+  tty->print_cr("-------------------------------------");
+  tty->print_cr("_mutator_free_bitmap");
+  _mutator_free_bitmap.print_on(tty);
+  tty->print_cr("_collector_free_bitmap");
+  _collector_free_bitmap.print_on(tty);
+
 }
 
 void ShenandoahFreeSet::adjust_bounds() {
   // Rewind both mutator bounds until the next bit.
-  while (_mutator_leftmost < _max && !is_mutator_free(_mutator_leftmost)) {
+  while (_mutator_leftmost < _local_max && !is_mutator_free(_mutator_leftmost)) {
     _mutator_leftmost++;
   }
   while (_mutator_rightmost > 0 && !is_mutator_free(_mutator_rightmost)) {
@@ -343,6 +360,7 @@ void ShenandoahFreeSet::try_recycle_trashed(ShenandoahHeapRegion *r) {
     _heap->decrease_used(r->used());
     r->recycle();
   }
+  // remote region should not go here
 }
 
 void ShenandoahFreeSet::recycle_trash() {
@@ -397,10 +415,15 @@ void ShenandoahFreeSet::clear_internal() {
 void ShenandoahFreeSet::rebuild() {
   shenandoah_assert_heaplocked();
   clear();
-
+  
+  tty->print_cr("Setting up local region bitmap: ");
   for (size_t idx = 0; idx < _heap->num_regions(); idx++) {
+    // tty->print_cr("Region idx : %lu", idx);
     ShenandoahHeapRegion* region = _heap->get_region(idx);
+    // tty->print_cr("Region state : %d", region->state());
+    // tty->print_cr("Region is remote : %d", region->is_remote());
     if (region->is_alloc_allowed() || region->is_trash()) {
+      // tty->print_cr("Region idx allows allocation : %lu", idx);
       assert(!region->is_cset(), "Shouldn't be adding those to the free set");
 
       // Do not add regions that would surely fail allocation
@@ -410,20 +433,37 @@ void ShenandoahFreeSet::rebuild() {
       assert(_used <= _capacity, "must not use more than we have");
 
       assert(!is_mutator_free(idx), "We are about to add it, it shouldn't be there already");
-      _mutator_free_bitmap.set_bit(idx);
+      if (region->is_local()) {
+        _mutator_free_bitmap.set_bit(idx);
+      }
     }
+    // tty->print_cr("----------------------------------------");
   }
 
   // Evac reserve: reserve trailing space for evacuations
-  size_t to_reserve = _heap->max_capacity() / 100 * ShenandoahEvacReserve;
+  // reserve space is a percentage of local space, remote space is always for collector
+  // size_t to_reserve = _heap->max_capacity() / 100 * ShenandoahEvacReserve;
+  size_t to_reserve = _heap->local_capacity() / 100 * ShenandoahEvacReserve;
   size_t reserved = 0;
 
-  for (size_t idx = _heap->num_regions() - 1; idx > 0; idx--) {
+  for (size_t idx = _heap->num_local_regions() - 1; idx > 0; idx--) {
     if (reserved >= to_reserve) break;
 
     ShenandoahHeapRegion* region = _heap->get_region(idx);
     if (_mutator_free_bitmap.at(idx) && is_empty_or_trash(region)) {
       _mutator_free_bitmap.clear_bit(idx);
+      _collector_free_bitmap.set_bit(idx);
+      size_t ac = alloc_capacity(region);
+      _capacity -= ac;
+      reserved += ac;
+    }
+  }
+  
+  tty->print_cr("Setting up remote region bitmap: ");
+  // Remote region is mostly always ready for evac
+  for (size_t idx = _heap->num_regions() - 1; idx >= _heap->remote_starting_region_idx(); idx--) {
+    ShenandoahHeapRegion* region = _heap->get_region(idx);
+    if (region->is_remote() && is_empty_or_trash(region)) {
       _collector_free_bitmap.set_bit(idx);
       size_t ac = alloc_capacity(region);
       _capacity -= ac;

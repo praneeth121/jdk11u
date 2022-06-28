@@ -34,6 +34,7 @@ private:
   CHeapBitMap _mutator_free_bitmap;
   CHeapBitMap _collector_free_bitmap;
   size_t _max;
+  size_t _local_max;
 
   // Left-most and right-most region indexes. There are no free regions outside
   // of [left-most; right-most] index intervals
@@ -71,7 +72,7 @@ private:
   bool has_no_alloc_capacity(ShenandoahHeapRegion *r);
 
 public:
-  ShenandoahFreeSet(ShenandoahHeap* heap, size_t max_regions);
+  ShenandoahFreeSet(ShenandoahHeap* heap, size_t max_regions, size_t local_max_regions);
 
   void clear();
   void rebuild();

@@ -9,7 +9,8 @@
 #include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
 
-#include "gc/shenandoah/shenandoahHeap.hpp"
+// #include "gc/shenandoah/shenandoahHeap.hpp"
+// #include "memory/virtualspace.hpp"
 
 #define BUFFER_SIZE 16
 #define RW_BUFFER_SIZE 1 << 16 // 64KB shoud be adquate, if not, do multiple trips
@@ -31,6 +32,7 @@
 
 
 class RemoteMem;
+class RDMAServer;
 // class RemoteRegion;
 class ShenandoahHeap;
 
@@ -55,7 +57,7 @@ enum COMM_CODE {
 // =================UtilFunctions============================= 
 
 
-static void print_a_buffer(uint8_t* buffer, int buffer_size, char* buffer_name) {
+static void print_a_buffer(char* buffer, int buffer_size, char* buffer_name) {
 	tty->print("%s: ", buffer_name);
 	for (int i = 0; i < buffer_size; i++) {
 		tty->print("%02X ", buffer[i]);
@@ -276,11 +278,13 @@ static int rdma_get_send_comp(struct rdma_cm_id *id, struct ibv_wc *wc)
 
 // };
 
+
 class MemoryRegion : public CHeapObj<mtGC> {
 private:
 	uint32_t _rkey;
 	void* _addr;
-	size_t _allocation_offset; // offset from mr->addr where an allocation can happen
+	size_t _mr_size;
+	// size_t _allocation_offset; // offset from mr->addr where an allocation can happen
 	size_t _used; 
 
 public:
@@ -288,13 +292,13 @@ public:
 private:
 
 public:
-	MemoryRegion(uint32_t rkey, void* start_addr);
-	size_t allocation_offset() 	{ return _allocation_offset; }
+	MemoryRegion(uint32_t rkey, void* start_addr, size_t mr_size);
+	// size_t allocation_offset() 	{ return _allocation_offset; }
 	size_t used() 						{ return _used; }
-	size_t free() 						{ return (size_t)MR_SIZE - _used; }
+	size_t free() 						{ return (size_t)(_mr_size) - _used; }
 	uint32_t rkey() 					{ return _rkey; }
 	void* start_addr() 					{ return _addr; }
-	void* allocation_pointer()			{ return (uint8_t*)_addr + _allocation_offset; }
+	// void* allocation_pointer()			{ return (uint8_t*)_addr + _allocation_offset; }
 
 	void increment_used(int i)			{_used += i;}
 };
@@ -303,15 +307,15 @@ public:
 class RDMAServer : public CHeapObj<mtGC> {
 private:
 	RemoteMem* connection;
-	MemoryRegion** mr_arr;
+	MemoryRegion* mr;
 	// RemoteRegion* rr_arr[100]; //allocate 100 regions each server
 	int next_empty_idx;
 	int send_flags;
 	struct ibv_wc wc;
 
-    uint8_t send_msg[BUFFER_SIZE];
-    uint8_t recv_msg[BUFFER_SIZE];
-	uint8_t rdma_buff[RW_BUFFER_SIZE];
+    char send_msg[BUFFER_SIZE];
+    char recv_msg[BUFFER_SIZE];
+	char rdma_buff[RW_BUFFER_SIZE];
     struct ibv_mr *recv_mr, *send_mr, *rdma_mr;
 
 
@@ -330,20 +334,22 @@ private:
 
 public:
 	RDMAServer(int idx, RemoteMem* connection);
-	int send_comm_code(COMM_CODE code);
-	int reg_new_mr();
+	size_t mr_size();
+	int send_comm_code(COMM_CODE code, size_t optional_val=0);
+	MemoryRegion* reg_new_mr(size_t byte_size);
 	int register_comm_mr();
 	int register_rdma_mr();
 	
 
-	int rdma_write(uint8_t* buffer, size_t length);
-	int rdma_read(uint8_t* buffer, int length, MemoryRegion* mr, int addr_offset);
+	int rdma_write(char* buffer, size_t length, size_t offset);
+	int rdma_read(char* buffer, size_t length, size_t addr_offset);
 
 	int rdma_send(char* buff);
 	int rdma_recv(char* buff);
 
 	int disconnect(DISCONNECT_CODE code);
 };
+
 
 
 class RemoteMem : public CHeapObj<mtGC> {
@@ -367,9 +373,10 @@ allocation is bump-pointing in remote mem region
 private:
 
     ShenandoahHeap* _heap;
+    size_t num_connections;
+	ReservedSpace _rs;
     struct rdma_cm_id* _listen_id;
 
-    int num_connections;
     // RemoteRegion** rr_arr;
 	RDMAServer** server_arr;
 
@@ -381,27 +388,39 @@ private:
 
 public:
 
-    RemoteMem(ShenandoahHeap* heap, int num_connections);
-	static oop create_remote_oop (size_t server_idx, size_t mr_idx, size_t mr_offset);
-    int establish_connections(char* local_addr, char* port);
+    RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs);
+    int establish_connections	();
+    int disconnect				(DISCONNECT_CODE code);
+	// TODO: see if this should be deleted
     bool expand_remote_region(int rm_idx, int expansion_size);
 
 
+	// functions that mimic local mem read and write api
+	void zero_to_words(HeapWord* addr, size_t word_size);
+
+
+
+
+	// getters
+	char*					base()				{ return _rs.base(); }
+	char*					end()				{ return _rs.end(); }
+	size_t					size()				{ return _rs.size(); }
+	size_t					size_per_server()	{ return _rs.size() / num_connections; }
+    struct rdma_cm_id ** 	listen_id()			{ return &_listen_id; }
+	size_t 				 	mr_size()			{ return size_per_server(); }
+
+	// util funcs
+	void 	addr_to_pos	(char* addr, size_t& server_idx, size_t& offset);
+	char* 	pos_to_addr	(size_t serer_idx, size_t offset);
+
+	void write	(char* to_addr, char* from_buffer, size_t byte_length);
+	void write	(HeapWord* to_addr, HeapWord* from_buffer, size_t word_length);
+
+	void read 	(char* from_addr, char* to_buffer, size_t byte_length);
+	void read 	(HeapWord* from_addr, HeapWord* to_buffer, size_t word_length);
+
+	// testing funcs
     void perform_some_tests();
-
-    // Read write to remote mem (Use mapping to get remote addr)
-    int allocate(int size);
-
-	oop evacuate_object(oop obj, size_t length_in_bytes);
-	void retract_evac(oop remote_obj, size_t size_in_words);
-
-	bool is_remote_oop(oop p);
-
-    int disconnect(DISCONNECT_CODE code);
-
-
-
-    struct rdma_cm_id ** listen_id() { return &_listen_id;}
 
 private:
 

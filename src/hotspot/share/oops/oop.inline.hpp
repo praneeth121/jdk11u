@@ -55,6 +55,14 @@ markOop* oopDesc::mark_addr_raw() const {
   return (markOop*) &_mark;
 }
 
+void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){ 
+  *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = new_value;
+}
+
+void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){ 
+  *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = new_value;
+}
+
 void oopDesc::set_mark(volatile markOop m) {
   HeapAccess<MO_VOLATILE>::store_at(as_oop(), mark_offset_in_bytes(), m);
 }

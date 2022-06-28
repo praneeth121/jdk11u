@@ -284,6 +284,26 @@
           "Many heuristics automatically enable this. This option is "      \
           "similar to global ExplicitGCInvokesConcurrent.")                 \
                                                                             \
+  experimental(bool, doEvacToRemote, false,                                 \
+          "Perform evacucation of cold obj to remote mem")                  \
+                                                                            \
+  experimental(uintx, numRemoteMems, 2,                                     \
+          "Number of RDMA connections")                                     \
+                                                                            \
+  experimental(uintx, expectedMemPerServer, 40,                             \
+          "Amout of memory per server in power of 2, should not be very"    \
+          "important since failure should be managed by using another "     \
+          "server.")                                                        \
+                                                                            \
+  experimental(ccstr, RDMALocalAddr, "",                                    \
+          "Address of rdma server")                                         \
+                                                                            \
+  experimental(ccstr, RDMAPort, "",                                         \
+          "Port of rdma server")                                            \
+                                                                            \
+  experimental(size_t, RemoteSizeExpecting, 8 * G,                          \
+          "Expected size of remote mem")                                    \
+                                                                            \
   diagnostic(bool, ShenandoahHumongousMoves, true,                          \
           "Allow moving humongous regions. This makes GC more resistant "   \
           "to external fragmentation that may otherwise fail other "        \

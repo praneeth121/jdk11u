@@ -50,13 +50,14 @@ size_t ShenandoahHeapRegion::HumongousThresholdWords = 0;
 size_t ShenandoahHeapRegion::MaxTLABSizeBytes = 0;
 size_t ShenandoahHeapRegion::MaxTLABSizeWords = 0;
 
-ShenandoahHeapRegion::ShenandoahHeapRegion(HeapWord* start, size_t index, bool committed) :
+ShenandoahHeapRegion::ShenandoahHeapRegion(HeapWord* start, size_t index, bool committed, bool is_remote) :
   _index(index),
   _bottom(start),
   _end(start + RegionSizeWords),
   _new_top(NULL),
   _empty_time(os::elapsedTime()),
   _state(committed ? _empty_committed : _empty_uncommitted),
+  _is_remote(is_remote),
   _top(start),
   _tlab_allocs(0),
   _gclab_allocs(0),
@@ -81,7 +82,8 @@ void ShenandoahHeapRegion::report_illegal_transition(const char *method) {
 
 void ShenandoahHeapRegion::make_regular_allocation() {
   shenandoah_assert_heaplocked();
-
+  tty->print_cr("psuedo - allocating to remote region");
+  // if (is_local()) {
   switch (_state) {
     case _empty_uncommitted:
       do_commit();
@@ -93,6 +95,10 @@ void ShenandoahHeapRegion::make_regular_allocation() {
     default:
       report_illegal_transition("regular allocation");
   }
+  // }
+  // else {
+  //   tty->print_cr("psuedo - allocating to remote region");
+  // }
 }
 
 void ShenandoahHeapRegion::make_regular_bypass() {
@@ -417,6 +423,18 @@ ShenandoahHeapRegion* ShenandoahHeapRegion::humongous_start_region() const {
 }
 
 void ShenandoahHeapRegion::recycle() {
+  if (is_remote()) {
+    tty->print_cr("Remore region should not go here");
+    set_top(bottom());
+    clear_live_data();
+
+    reset_alloc_metadata();
+
+    ShenandoahHeap::heap()->marking_context()->reset_top_at_mark_start(this);
+    set_update_watermark(bottom());
+    
+    return;
+  }
   set_top(bottom());
   clear_live_data();
 
@@ -634,16 +652,20 @@ size_t ShenandoahHeapRegion::setup_sizes(size_t max_heap_size) {
 
 void ShenandoahHeapRegion::do_commit() {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
-  if (!heap->is_heap_region_special() && !os::commit_memory((char *) bottom(), RegionSizeBytes, false)) {
-    report_java_out_of_memory("Unable to commit region");
+  if (is_local()) {
+    if (!heap->is_heap_region_special() && !os::commit_memory((char *) bottom(), RegionSizeBytes, false)) {
+      report_java_out_of_memory("Unable to commit region");
+    }
+    if (!heap->commit_bitmap_slice(this)) {
+      report_java_out_of_memory("Unable to commit bitmaps for region");
+    }
+    if (AlwaysPreTouch) {
+      os::pretouch_memory(bottom(), end(), heap->pretouch_heap_page_size());
+    }
+    heap->increase_committed(ShenandoahHeapRegion::region_size_bytes());
+  } else {
+    // do something is region is remote
   }
-  if (!heap->commit_bitmap_slice(this)) {
-    report_java_out_of_memory("Unable to commit bitmaps for region");
-  }
-  if (AlwaysPreTouch) {
-    os::pretouch_memory(bottom(), end(), heap->pretouch_heap_page_size());
-  }
-  heap->increase_committed(ShenandoahHeapRegion::region_size_bytes());
 }
 
 void ShenandoahHeapRegion::do_uncommit() {

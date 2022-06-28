@@ -1,5 +1,5 @@
-#include "memory/remoteMem.hpp"
-
+// #include "memory/remoteMem.hpp"
+#include "gc/shenandoah/shenandoahHeap.hpp"
 
 // ==============RemoteRegion=======================================
 
@@ -159,14 +159,14 @@
 //     }
 // }
 
-int RDMAServer::rdma_read(uint8_t* buffer, int length, MemoryRegion* mr, int addr_offset) {
+int RDMAServer::rdma_read(char* buffer, size_t length, size_t offset) {
 	int ret;
 	
 	tty->print_cr("RDMA read ...");
 
 	memset(rdma_buff, 0, RW_BUFFER_SIZE);
 
-	ret = rdma_post_read(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((uint8_t*)(mr->start_addr())+addr_offset), mr->rkey());
+	ret = rdma_post_read(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)(mr->start_addr())+offset), mr->rkey());
 	if (ret) {
 		perror("Error rdma read");
 		return disconnect(out_disconnect);
@@ -182,10 +182,10 @@ int RDMAServer::rdma_read(uint8_t* buffer, int length, MemoryRegion* mr, int add
 	return ret;	
 }
 
-int RDMAServer::rdma_write(uint8_t* buffer, size_t length) {
+int RDMAServer::rdma_write(char* buffer, size_t length, size_t offset) {
 	int ret;
 	
-	MemoryRegion* mr = get_current_mr(length);
+	// MemoryRegion* mr = get_current_mr(length);
 	assert(length < mr->free(), "No valid free space");
 	tty->print_cr("RDMA write ...");
 
@@ -193,7 +193,7 @@ int RDMAServer::rdma_write(uint8_t* buffer, size_t length) {
 	
 	memcpy(rdma_buff, buffer, length);
 
-	ret = rdma_post_write(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((uint8_t*)mr->allocation_pointer()), mr->rkey());
+	ret = rdma_post_write(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey());
 	if (ret) {
 		perror("Error rdma write");
 		return disconnect(out_disconnect);
@@ -262,10 +262,11 @@ int RDMAServer::rdma_write(uint8_t* buffer, size_t length) {
 // // }
 
 // =================MemoryRegion=============================
-MemoryRegion::MemoryRegion(uint32_t rkey, void* start_addr) : 
+MemoryRegion::MemoryRegion(uint32_t rkey, void* start_addr, size_t mr_size) : 
 	_rkey(rkey),
 	_addr(start_addr),
-	_allocation_offset(0),
+	_mr_size(mr_size),
+	// _allocation_offset(0),
 	_used(0)
 {}
 
@@ -274,7 +275,7 @@ MemoryRegion::MemoryRegion(uint32_t rkey, void* start_addr) :
 RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
 	idx(idx),
 	connection(connection),
-	mr_arr(NULL),
+	mr(NULL),
 	next_empty_idx(0),
 	send_flags(0),
 	wc(),
@@ -286,8 +287,9 @@ RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
 	rdma_mr(NULL),
 	cm_id()
 {
-	tty->print_cr("Number of regions per server %lu", ((size_t)1<<expectedMemPerServer) / MR_SIZE);
-	mr_arr = (MemoryRegion**)malloc(sizeof(MemoryRegion*) * ((size_t)1<<expectedMemPerServer) / MR_SIZE);
+	// tty->print_cr("Number of regions per server %lu", ((size_t)1<<expectedMemPerServer) / MR_SIZE);
+	// mr = (MemoryRegion**)malloc(sizeof(MemoryRegion*) * ((size_t)1<<expectedMemPerServer) / MR_SIZE);
+	// mr = new MemoryRegion()
 	struct rdma_addrinfo hints;
 	struct ibv_qp_init_attr init_attr;
 	struct ibv_qp_attr qp_attr;
@@ -324,17 +326,24 @@ RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
 		perror("rdma_accept");
 		disconnect(out_dereg_send);
 	}
-	register_comm_mr();
-	register_rdma_mr();
+	
+	register_comm_mr();		// to send recv control signals
+	register_rdma_mr();		// Buffer and region setup for local to read/write to remote regions
+	mr = reg_new_mr(connection->mr_size());
 }
 
-int RDMAServer::send_comm_code(COMM_CODE code) {
+int RDMAServer::send_comm_code(COMM_CODE code, size_t optional_val) {
 	int ret;
-    // now we can close both process by posting a send
 
-	tty->print_cr("rdma_post_send ...");
+	tty->print_cr("rdma sending a communication code ...");
     memset(send_msg, 0, BUFFER_SIZE);
     memcpy(send_msg , &code, sizeof(COMM_CODE));
+
+	if (code == REG_MR) {
+		// optional val should contain a byte size of the remote mr
+		memcpy(send_msg + sizeof(COMM_CODE), &optional_val, sizeof(size_t));
+	}
+
     print_a_buffer(send_msg, BUFFER_SIZE, (char*)"send_msg");
 	ret = rdma_post_send(cm_id, NULL, send_msg, 16, send_mr, send_flags);
 	if (ret) {
@@ -371,18 +380,19 @@ int RDMAServer::disconnect(DISCONNECT_CODE code) {
     return 0;
 }
 
-int RDMAServer::reg_new_mr() {
-	tty->print_cr("Registering new mr at remote .. ");
+MemoryRegion* RDMAServer::reg_new_mr(size_t byte_size) {
+	// Send a signal to remote, commanding it to allocate a new rdma mr and send back the key and starting addr of the mr
+	tty->print_cr("Registering new mr of size %lu at remote .. ", byte_size);
     int ret;
 	uint32_t rkey;
     void* remote_addr;
-    send_comm_code(REG_MR);
+    send_comm_code(REG_MR, byte_size);
     	// receive remote mr rkey and addr of client
 	tty->print_cr("rdma_post_recv ...");
 	ret = rdma_post_recv(cm_id, NULL, recv_msg, 16, recv_mr);
 	if (ret) {
 		perror("rdma_post_recv");
-		return connection->disconnect(out_dereg_send);
+		connection->disconnect(out_dereg_send);
 	}
 
 
@@ -390,7 +400,7 @@ int RDMAServer::reg_new_mr() {
 	while ((ret = rdma_get_recv_comp(cm_id, &wc)) == 0);
 	if (ret < 0) {
 		perror("rdma_get_recv_comp");
-		return connection->disconnect(out_disconnect);
+		connection->disconnect(out_disconnect);
 	}
 
 	// extract information
@@ -398,15 +408,17 @@ int RDMAServer::reg_new_mr() {
 	// todo: if is recv buffer zero then remote region cannot register new MR
 
 	memcpy(&rkey, recv_msg, sizeof(rkey));
-	print_a_buffer((uint8_t*)&rkey, sizeof(rkey), (char*)"rkey");
+	print_a_buffer((char*)&rkey, sizeof(rkey), (char*)"rkey");
 
 	memcpy(&remote_addr, recv_msg + sizeof(rkey), sizeof(remote_addr));
 
-	print_a_buffer((uint8_t*)&remote_addr, sizeof(remote_addr), (char*)"remote addr");
+	print_a_buffer((char*)&remote_addr, sizeof(remote_addr), (char*)"remote addr");
 
-	mr_arr[next_empty_idx] = new MemoryRegion(rkey, remote_addr);
-	next_empty_idx++;
-    return ret;
+	// mr_arr[next_empty_idx] = new MemoryRegion(rkey, remote_addr);
+	// next_empty_idx++;
+    // return ret;
+
+	return new MemoryRegion(rkey, remote_addr, byte_size);
 }
 
 int RDMAServer::register_comm_mr() {
@@ -441,21 +453,27 @@ int RDMAServer::register_rdma_mr() {
 	return 0;
 }
 
-MemoryRegion* RDMAServer::get_current_mr(size_t length) {
-	if (next_empty_idx == 0) {
-		reg_new_mr();
-	}
-	MemoryRegion* mr = mr_arr[next_empty_idx-1];
-	tty->print_cr("Selected mr: %p", mr);
-	while (mr->free() < length) {
-		tty->print_cr("next_empty_idx: %d", next_empty_idx);
-		tty->print_cr("mr->free(): %lu", mr->free());
-		tty->print_cr("length: %lu", length);
+size_t RDMAServer::mr_size() {
+	return connection->mr_size();
+}
 
-		reg_new_mr();
-		mr = mr_arr[next_empty_idx-1];
-	}
-	tty->print_cr("Returning new MR");
+MemoryRegion* RDMAServer::get_current_mr(size_t length) {
+	// if (next_empty_idx == 0) {
+	// 	reg_new_mr();
+	// }
+	// MemoryRegion* mr = mr_arr[next_empty_idx-1];
+	// tty->print_cr("Selected mr: %p", mr);
+	// while (mr->free() < length) {
+	// 	tty->print_cr("next_empty_idx: %d", next_empty_idx);
+	// 	tty->print_cr("mr->free(): %lu", mr->free());
+	// 	tty->print_cr("length: %lu", length);
+
+	// 	reg_new_mr();
+	// 	mr = mr_arr[next_empty_idx-1];
+	// }
+	// tty->print_cr("Returning new MR");
+
+	// return mr;
 
 	return mr;
 	
@@ -465,30 +483,25 @@ MemoryRegion* RDMAServer::get_current_mr(size_t length) {
 // =================RDMAConnect============================= 
 
 
-RemoteMem::RemoteMem(ShenandoahHeap* heap, int num_connections) : 
+RemoteMem::RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs) : 
 	_heap(heap),
 	num_connections(num_connections),
+	_rs(rs),
 	_listen_id(NULL),
 	server_arr(),
-	res(NULL){}
+	res(NULL)
+{
+	establish_connections();
+}
 
-// oop RemoteMem::create_remote_oop(size_t server_idx, size_t mr_idx, size_t mr_offset) {
-// 	size_t ret = 0;
-// 	assert(server_idx < 1 << SERVER_ID_BITS);
-// 	assert(mr_idx < 1 << MR_ID_BITS);
-// 	assert(mr_offset < 1 << MR_OFFSET_BITS);
-// 	ret |= (server_idx << SERVER_ID_BITS) | (mr_idx << MR_ID_BITS) | (mr_offset << MR_OFFSET_BITS) | 1;
-// 	return (oop)ret;
-// }
-
-int RemoteMem::establish_connections(char* local_addr, char* port){
+int RemoteMem::establish_connections(){
     struct rdma_addrinfo hints;
 	struct ibv_qp_init_attr init_attr;
     int ret;
     memset(&hints, 0, sizeof hints);
 	hints.ai_flags = RAI_PASSIVE;
 	hints.ai_port_space = RDMA_PS_TCP;
-	ret = rdma_getaddrinfo(local_addr, port, &hints, &res);
+	ret = rdma_getaddrinfo(RDMALocalAddr, RDMAPort, &hints, &res);
 	if (ret) {
 		tty->print_cr("rdma_getaddrinfo: %s", gai_strerror(ret));
 		// tty->print_cr("Fail at rdma_getaddrinfo");
@@ -517,8 +530,8 @@ int RemoteMem::establish_connections(char* local_addr, char* port){
 	// rr_arr = new RemoteRegion* [num_connections];
 	server_arr = (RDMAServer**)malloc(sizeof(RDMAServer*) * num_connections);
 
-    for (int i= 0; i < num_connections; i++) {
-		tty->print_cr("i = %d, num_conn = %d", i, num_connections);
+    for (size_t i= 0; i < num_connections; i++) {
+		tty->print_cr("i = %lu, num_conn = %lu", i, num_connections);
 
         server_arr[i] = new RDMAServer(i, this);
         // rr_arr[i] = new RemoteRegion(this);
@@ -528,22 +541,12 @@ int RemoteMem::establish_connections(char* local_addr, char* port){
     return ret;
 }
 
-// bool RemoteMem::expand_remote_region(int rm_idx, int expansion_size) {
-// 	// send signal to remote node to expand remote region
-// 	// rr_arr[rm_idx]->rdma_send();
-// }
-
-// int RemoteMem::allocate(int size) {
-// 	// if (current_head == NULL) {
-// 	// 	expand_remote_region();
-// 	// }
-// }
 
 int RemoteMem::disconnect (DISCONNECT_CODE code) {
     switch (code){
         case out_disconnect:
         case out_dereg_send:
-			for (int i = 0; i < num_connections; i++) {
+			for (size_t i = 0; i < num_connections; i++) {
 				server_arr[i]->disconnect(code);
 			}
         case out_destroy_listen_ep:
@@ -554,6 +557,13 @@ int RemoteMem::disconnect (DISCONNECT_CODE code) {
             return 0;
     }
     return 0;
+}
+
+void RemoteMem::zero_to_words(HeapWord* addr, size_t word_size) {
+	assert(_heap->is_in_remote(addr), "Address must be in remote");
+	char buff[word_size*HeapWordSize];
+	memset(buff, 0, word_size*HeapWordSize);
+	write(addr, (HeapWord*)buff, word_size);
 }
 
 // int RemoteMem::send_comm_code(COMM_CODE code) {
@@ -583,12 +593,82 @@ int RemoteMem::disconnect (DISCONNECT_CODE code) {
 
 void RemoteMem::perform_some_tests() {
 	// RemoteRegion* rr = rr_arr[0];
+	RDMAServer* server;
+	tty->print_cr("Testing rdma");
+	char buff[BUFFER_SIZE];
+	tty->print_cr("Test 1");
+	memset(buff, 0, BUFFER_SIZE);
+	server = server_arr[0];
 	tty->print_cr("RDMA write");
-	uint8_t buff[BUFFER_SIZE];
 	memcpy(buff, "Dat", BUFFER_SIZE);
-	RDMAServer* server = server_arr[0];
-	server->rdma_write(buff, BUFFER_SIZE);
+	server->rdma_write(buff, BUFFER_SIZE, 0);
 	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	memset(buff, 0, BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("RDMA read");
+	server->rdma_read(buff, BUFFER_SIZE, 0);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("-------------------------------");
+
+
+	tty->print_cr("Test 2");
+	memset(buff, 0, BUFFER_SIZE);
+	server = server_arr[1];
+	tty->print_cr("RDMA write");
+	memcpy(buff, "Dat", BUFFER_SIZE);
+	server->rdma_write(buff, BUFFER_SIZE, 0);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	memset(buff, 0, BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("RDMA read");
+	server->rdma_read(buff, BUFFER_SIZE, 0);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("-------------------------------");
+
+
+	tty->print_cr("Test 3");
+	memset(buff, 0, BUFFER_SIZE);
+	server = server_arr[0];
+	tty->print_cr("RDMA write");
+	memcpy(buff, "Nguyen", BUFFER_SIZE);
+	server->rdma_write(buff, BUFFER_SIZE, 64);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	memset(buff, 0, BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("RDMA read");
+	server->rdma_read(buff, BUFFER_SIZE, 64);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("-------------------------------");
+
+
+	tty->print_cr("Test 4");
+	memset(buff, 0, BUFFER_SIZE);
+	server = server_arr[0];
+	tty->print_cr("RDMA write");
+	memcpy(buff, "Nguyen", BUFFER_SIZE);
+	server->rdma_write(buff, BUFFER_SIZE, size_per_server() - BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	memset(buff, 0, BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("RDMA read");
+	server->rdma_read(buff, BUFFER_SIZE, size_per_server() - BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("-------------------------------");
+
+
+	tty->print_cr("Test 5");
+	memset(buff, 0, BUFFER_SIZE);
+	server = server_arr[0];
+	tty->print_cr("RDMA write");
+	memcpy(buff, "Nguyen", BUFFER_SIZE);
+	server->rdma_write(buff, 1, size_per_server() - 1);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	memset(buff, 0, BUFFER_SIZE);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("RDMA read");
+	server->rdma_read(buff, 1, size_per_server() - 1);
+	print_a_buffer(buff, BUFFER_SIZE, "Test buff");
+	tty->print_cr("-------------------------------");
 	// rr->rdma_write(buff, 16, 0);
 
 	// memset(buff, 0, BUFFER_SIZE);
@@ -599,12 +679,46 @@ void RemoteMem::perform_some_tests() {
 	// print_a_buffer(buff, BUFFER_SIZE, (char*)"Test buff");
 }
 
-oop RemoteMem::evacuate_object(oop obj, size_t length_in_bytes) {
-	// copy to a buffer
+void RemoteMem::addr_to_pos(char* addr, size_t& server_idx, size_t& offset) {
+	size_t remote_offset = addr - base();
+	server_idx = remote_offset / size_per_server();
 
-
-	return NULL;
+	assert(server_idx < num_connections, "must be a valid server");
+	offset = remote_offset % size_per_server();
+	assert(offset < size_per_server(), "must be a valid offset into the server");
 }
+
+void RemoteMem::write(char* to_addr, char* from_buffer, size_t byte_length) {
+	size_t server_idx = 0;
+	size_t offset = 0;
+
+	addr_to_pos(to_addr, server_idx, offset);
+
+	tty->print_cr("Writing to server %lu, offset %lu", server_idx, offset);
+
+	RDMAServer* server = server_arr[server_idx];
+	server->rdma_write(from_buffer, byte_length, offset);
+}
+
+void RemoteMem::write(HeapWord* to_addr, HeapWord* from_buffer, size_t word_length) {
+	write((char*)to_addr, (char*) from_buffer, word_length*HeapWordSize);
+}
+
+void RemoteMem::read(char* from_addr, char* to_buffer, size_t byte_length) {
+	size_t server_idx = 0;
+	size_t offset = 0;
+
+	addr_to_pos(from_addr, server_idx, offset);
+
+	tty->print_cr("Reading to server %lu, offset %lu", server_idx, offset);
+
+	RDMAServer* server = server_arr[server_idx];
+	server->rdma_read(to_buffer, byte_length, offset);
+}
+void RemoteMem::read(HeapWord* from_addr, HeapWord* to_buffer, size_t word_length) {
+	read((char*)from_addr, (char*) to_buffer, word_length*HeapWordSize);
+}
+
 
 // int RemoteMem::send_comm_code(RDMAServer* server, COMM_CODE code) {
 // 	int ret;
