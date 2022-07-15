@@ -1,6 +1,9 @@
 // #include "memory/remoteMem.hpp"
 #include "gc/shenandoah/shenandoahHeap.hpp"
 
+ShenandoahHeap* RemoteMem::_heap = NULL;
+RemoteMem* RemoteMem::_remote_mem = NULL;
+
 // ==============RemoteRegion=======================================
 
 // RemoteRegion::RemoteRegion(RemoteMem* connection) : 
@@ -175,7 +178,7 @@ int RDMAServer::rdma_read(char* buffer, size_t length, size_t offset) {
 		ret = ibv_poll_cq(cm_id->send_cq, 1, &wc);
 	} while (ret == 0);
 
-	get_wc_status(&wc);
+	// get_wc_status(&wc);
 
 	memcpy(buffer, rdma_buff, length);
 
@@ -187,7 +190,7 @@ int RDMAServer::rdma_write(char* buffer, size_t length, size_t offset) {
 	
 	// MemoryRegion* mr = get_current_mr(length);
 	assert(length < mr->free(), "No valid free space");
-	tty->print_cr("RDMA write ...");
+	// tty->print_cr("RDMA write ...");
 
 	memset(rdma_buff, 0, RW_BUFFER_SIZE);
 	
@@ -203,9 +206,28 @@ int RDMAServer::rdma_write(char* buffer, size_t length, size_t offset) {
 		ret = ibv_poll_cq(cm_id->send_cq, 1, &wc);
 	} while (ret == 0);
 
-	get_wc_status(&wc);
+	// get_wc_status(&wc);
 
 	return ret;	
+}
+
+int RDMAServer::atomic_cas(uint64_t& previous, size_t offset, uint64_t expected, uint64_t desired) {
+	int ret;
+	memset(rdma_buff, 0, RW_BUFFER_SIZE);
+	
+	ret = rdma_post_cas(cm_id, NULL, rdma_buff, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey(), expected, desired);
+	if (ret) {
+		perror("Error atomic cas");
+		return disconnect(out_disconnect);
+		// goto out_disconnect;
+	}
+	do {
+		ret = ibv_poll_cq(cm_id->send_cq, 1, &wc);
+	} while (ret == 0);
+	
+	memcpy(&previous, rdma_buff, sizeof(uint64_t));
+
+	return ret;
 }
 
 // // int RemoteRegion::rdma_send(uint8_t* buffer, int length) {
@@ -483,15 +505,20 @@ MemoryRegion* RDMAServer::get_current_mr(size_t length) {
 // =================RDMAConnect============================= 
 
 
-RemoteMem::RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs) : 
-	_heap(heap),
+RemoteMem::RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs) :
 	num_connections(num_connections),
 	_rs(rs),
 	_listen_id(NULL),
 	server_arr(),
 	res(NULL)
 {
+	_heap = heap;
+	_remote_mem = this;
 	establish_connections();
+}
+RemoteMem* RemoteMem::remote_mem() {
+	assert(_remote_mem != NULL, "Remote Mem is not established");
+	return _remote_mem;
 }
 
 int RemoteMem::establish_connections(){
@@ -509,8 +536,8 @@ int RemoteMem::establish_connections(){
 	}
 
     memset(&init_attr, 0, sizeof init_attr);
-	init_attr.cap.max_send_wr = init_attr.cap.max_recv_wr = 1;
-	init_attr.cap.max_send_sge = init_attr.cap.max_recv_sge = 1;
+	init_attr.cap.max_send_wr = init_attr.cap.max_recv_wr = 16;
+	init_attr.cap.max_send_sge = init_attr.cap.max_recv_sge = 16;
 	init_attr.cap.max_inline_data = 16;
 	init_attr.sq_sig_all = 1;
 	ret = rdma_create_ep(&_listen_id, res, NULL, &init_attr);
@@ -691,6 +718,7 @@ void RemoteMem::addr_to_pos(char* addr, size_t& server_idx, size_t& offset) {
 void RemoteMem::write(char* to_addr, char* from_buffer, size_t byte_length) {
 	size_t server_idx = 0;
 	size_t offset = 0;
+	assert(_heap->is_in_remote(to_addr), "Must be a remote addr");
 
 	addr_to_pos(to_addr, server_idx, offset);
 
@@ -704,9 +732,21 @@ void RemoteMem::write(HeapWord* to_addr, HeapWord* from_buffer, size_t word_leng
 	write((char*)to_addr, (char*) from_buffer, word_length*HeapWordSize);
 }
 
+template <typename T>
+void RemoteMem::write(T val, void* to_addr) {
+	tty->print_cr("writing primitive");
+	write((char*)to_addr, (char*) &val, sizeof(T));
+}
+
+void RemoteMem::write_obj_header(oopDesc header, void* to_addr) {
+	tty->print_cr("writing object header");
+	write((char*)to_addr, (char*) &header, sizeof(oopDesc));
+}
+
 void RemoteMem::read(char* from_addr, char* to_buffer, size_t byte_length) {
 	size_t server_idx = 0;
 	size_t offset = 0;
+	assert(_heap->is_in_remote(from_addr), "Must be a remote addr");
 
 	addr_to_pos(from_addr, server_idx, offset);
 
@@ -715,10 +755,52 @@ void RemoteMem::read(char* from_addr, char* to_buffer, size_t byte_length) {
 	RDMAServer* server = server_arr[server_idx];
 	server->rdma_read(to_buffer, byte_length, offset);
 }
+
 void RemoteMem::read(HeapWord* from_addr, HeapWord* to_buffer, size_t word_length) {
 	read((char*)from_addr, (char*) to_buffer, word_length*HeapWordSize);
 }
 
+template <typename T>
+T RemoteMem::read(void* from_addr) {
+	tty->print_cr("reading primitive");
+	T ret_val;
+	read((char*)from_addr, (char*) &ret_val, sizeof(T));
+	return ret_val;
+}
+
+oopDesc RemoteMem::read_obj_header(void* from_addr) {
+	tty->print_cr("reading obj header");
+	oopDesc ret_val;
+	read((char*)from_addr, (char*) &ret_val, sizeof(oopDesc));
+	return ret_val;
+}
+
+uint64_t RemoteMem::remote_cas(char* addr, uint64_t expected, uint64_t desired) {
+	// work only for 64 bit field
+	// previous is to be returned. It is value of that field before cas.
+	// if field equals expected, write desired to field
+	// else, does nothing
+	size_t server_idx = 0;
+	size_t offset = 0;
+	assert(_heap->is_in_remote(addr), "Must be a remote addr");
+	addr_to_pos(addr, server_idx, offset);
+
+	tty->print_cr("CAS to server %lu, offset %lu", server_idx, offset);
+
+	RDMAServer* server = server_arr[server_idx];
+	uint64_t previous = 0;
+	server->atomic_cas(previous,offset, expected, desired);
+	return previous;
+}
+
+// void RemoteMem::read_obj_header(void* from_addr, oopDesc* obj_addr) {
+// 	if (UseCompressedClassPointers) {
+// 		read((char*)from_addr, (char*) obj_addr, sizeof(oopDesc));
+// 	} else {
+// 		// last bit for 
+// 		read((char*)from_addr, (char*) obj_addr, sizeof(oopDesc) + sizeof(int));
+// 	}
+// }
 
 // int RemoteMem::send_comm_code(RDMAServer* server, COMM_CODE code) {
 // 	int ret;

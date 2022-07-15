@@ -37,6 +37,7 @@
 #include "utilities/formatBuffer.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/macros.hpp"
+#include "memory/remoteMem.hpp"
 
 // A "CollectedHeap" is an implementation of a java heap for HotSpot.  This
 // is an abstract class: there may be many different kinds of heaps.  This
@@ -133,6 +134,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   GCCause::Cause _gc_lastcause;
   PerfStringVariable* _perf_gc_cause;
   PerfStringVariable* _perf_gc_lastcause;
+
+  static RemoteMem* _remote_mem;
 
   // Constructor
   CollectedHeap();
@@ -253,6 +256,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // This method can be expensive so avoid using it in performance critical
   // code.
   virtual bool is_in(const void* p) const = 0;
+
+  static RemoteMem* remote_mem() { return _remote_mem; }
 
   DEBUG_ONLY(bool is_in_or_null(const void* p) const { return p == NULL || is_in(p); })
 

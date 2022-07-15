@@ -176,6 +176,10 @@ void ShenandoahAsserts::assert_in_heap(void* interior_loc, oop obj, const char *
 
 void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* file, int line) {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
+  if (heap->is_in_remote(obj)) {
+    // tty->print_cr("assert_correct: obj in remote");
+    return;
+  }
 
   // Step 1. Check that obj is correct.
   // After this step, it is safe to call heap_region_containing().
@@ -199,7 +203,7 @@ void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* 
   }
 
   oop fwd = oop(ShenandoahForwarding::get_forwardee_raw_unchecked(obj));
-
+  // fwd can be remote
   if (obj != fwd) {
     // When Full GC moves the objects, we cannot trust fwdptrs. If we got here, it means something
     // tries fwdptr manipulation when Full GC is running. The only exception is using the fwdptr

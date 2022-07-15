@@ -40,6 +40,20 @@ inline HeapWord* ShenandoahForwarding::get_forwardee_raw_unchecked(oop obj) {
   // fwdptr. That object is still not forwarded, and we need to return
   // the object itself.
   markOop mark = obj->mark_raw();
+  // if (doEvacToRemote && UseShenandoahGC) {
+  //   CollectedHeap* heap = Universe::heap();
+  //   assert(heap != NULL, "Must not be null");
+  //   assert(heap->remote_mem() != NULL, "Must not be null");
+  //   if (heap->remote_mem()->is_in(this)) {
+  //     tty->print_cr("Remote oop in get_forwardee_raw_unchecked");
+  //     oopDesc header = heap->remote_mem()->read_obj_header((void*)this);
+  //     mark = header.mark_raw();
+  //   } else {
+  //     mark = obj->mark_raw();
+  //   }
+  // } else {
+  //   mark = obj->mark_raw();
+  // }
   if (mark->is_marked()) {
     HeapWord* fwdptr = (HeapWord*) mark->clear_lock_bits();
     if (fwdptr != NULL) {
@@ -82,8 +96,10 @@ inline oop ShenandoahForwarding::try_update_forwardee(oop obj, oop update) {
   markOop new_mark = markOopDesc::encode_pointer_as_mark(update);
   markOop prev_mark = obj->cas_set_mark_raw(new_mark, old_mark);
   if (prev_mark == old_mark) {
+    // cas success, prev mark is the old mark
     return update;
   } else {
+    // cas failed, prev mark is the latest oop
     return (oop) prev_mark->clear_lock_bits();
   }
 }

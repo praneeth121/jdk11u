@@ -75,14 +75,14 @@ void PLAB::flush_and_retire_stats(PLABStats* stats) {
   _undo_wasted = 0;
 }
 
-void PLAB::retire() {
-  _wasted += retire_internal();
+void PLAB::retire(bool is_remote) {
+  _wasted += retire_internal(is_remote);
 }
 
-size_t PLAB::retire_internal() {
+size_t PLAB::retire_internal(bool is_remote) {
   size_t result = 0;
   if (_top < _hard_end) {
-    Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
+    if (!is_remote) Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
     result += invalidate();
   }
   return result;

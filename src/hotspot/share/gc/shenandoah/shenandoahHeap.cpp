@@ -544,7 +544,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _used(0),
   _committed(0),
   _bytes_allocated_since_gc_start(0),
-  _remote_mem(NULL),
   _max_workers(MAX2(ConcGCThreads, ParallelGCThreads)),
   _workers(NULL),
   _safepoint_workers(NULL),
@@ -810,17 +809,17 @@ bool ShenandoahHeap::is_in(const void* p) const {
 }
 
 bool ShenandoahHeap::is_in_remote(const void* p) const {
-  if (!doEvacToRemote) return false;
+  if (p == NULL) return false;
+  assert(is_in(p), "must be on heap");
+  if (!doEvacToRemote || !is_in(p)) return false;
   HeapWord* remote_base = (HeapWord*)remote_mem()->base();
   HeapWord* remote_end  = (HeapWord*)remote_mem()->end();
   return p >= remote_base && p < remote_end;
-  // Mod this function
-  // HeapWord* heap_base = (HeapWord*) base();
-  // HeapWord* last_region_end = heap_base + ShenandoahHeapRegion::region_size_words() * num_regions();
-  // return p >= heap_base && p < last_region_end;
 }
 
 bool ShenandoahHeap::is_in_local(const void* p) const {
+  if (p == NULL) return false;
+  assert(is_in(p), "must be on heap");
   if (!doEvacToRemote) return true;
   return is_in(p) && !is_in_remote(p);
 }
@@ -856,7 +855,7 @@ void ShenandoahHeap::op_uncommit(double shrink_before, size_t shrink_until) {
 }
 
 HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, bool is_remote) {
-  tty->print_cr("gclab slow allocation");
+  // tty->print_cr("gclab slow allocation");
   // New object should fit the GCLAB size
   size_t min_size = MAX2(size, PLAB::min_size());
 
@@ -877,7 +876,11 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, 
   }
 
   // Retire current GCLAB, and allocate a new one.
+  // Do nothing if plab is remote
   PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  // if (is_in_remote(gclab->bottom())) {
+  //   tty->print_cr("Remote Plab detected");
+  // }
   gclab->retire();
 
   size_t actual_size = 0;
@@ -890,7 +893,7 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, 
 
   if (ZeroTLAB) {
     // ..and clear it.
-    tty->print_cr("Clearing GC lab buffer");
+    // tty->print_cr("Clearing GC lab buffer");
     if (is_in_local(gclab_buf)){
       Copy::zero_to_words(gclab_buf, actual_size);
     } else {
@@ -904,17 +907,17 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, 
     // ensure that the returned space is not considered parsable by
     // any concurrent GC thread.
     size_t hdr_size = oopDesc::header_size();
-    tty->print_cr("Fill with bad heap word");
+    // tty->print_cr("Fill with bad heap word");
     if (is_in_local(gclab_buf)) {
-      tty->print_cr("Is in local");
+      // tty->print_cr("Is in local");
       Copy::fill_to_words(gclab_buf + hdr_size, actual_size - hdr_size, badHeapWordVal);
     } else {
-      tty->print_cr("Is in remote");
+      // tty->print_cr("Is in remote");
       // Do nothing for now
     }
 #endif // ASSERT
   }
-  tty->print_cr("Attach buffer to gclab");
+  // tty->print_cr("Attach buffer to gclab");
   gclab->set_buf(gclab_buf, actual_size);
   return gclab->allocate(size);
 }
@@ -936,7 +939,7 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t min_size,
                                              size_t word_size,
                                              size_t* actual_size,
                                              bool is_remote) {
-  tty->print_cr("Allocating new gclab ... ");
+  // tty->print_cr("Allocating new gclab ... ");
   ShenandoahAllocRequest req = ShenandoahAllocRequest::for_gclab(min_size, word_size);
   HeapWord* res = allocate_memory(req);
   if (res != NULL) {
@@ -944,8 +947,8 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t min_size,
   } else {
     *actual_size = 0;
   }
-  tty->print_cr("New gclab %p: ", res);
-  tty->print_cr("-------------------------");
+  // tty->print_cr("New gclab %p: ", res);
+  // tty->print_cr("-------------------------");
   return res;
 }
 
@@ -1218,6 +1221,7 @@ public:
     _rp(rp) {}
 
   void work(uint worker_id) {
+    tty->print_cr("ShenandoahEvacuateUpdateRootsTask starting -----------------------------");
     ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahEvacOOMScope oom_evac_scope;
     ShenandoahEvacuateUpdateRootsClosure cl;

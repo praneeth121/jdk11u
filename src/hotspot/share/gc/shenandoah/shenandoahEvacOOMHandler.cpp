@@ -49,6 +49,7 @@ void ShenandoahEvacOOMHandler::wait_for_no_evac_threads() {
 
 void ShenandoahEvacOOMHandler::enter_evacuation() {
   jint threads_in_evac = OrderAccess::load_acquire(&_threads_in_evac);
+  // tty->print_cr("Thread: %s | Enter evac ", Thread::current()->name());
 
   assert(!ShenandoahThreadLocalData::is_evac_allowed(Thread::current()), "sanity");
   assert(!ShenandoahThreadLocalData::is_oom_during_evac(Thread::current()), "TL oom-during-evac must not be set");

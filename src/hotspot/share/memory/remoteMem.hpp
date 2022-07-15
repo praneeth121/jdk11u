@@ -229,6 +229,41 @@ static int rdma_get_send_comp(struct rdma_cm_id *id, struct ibv_wc *wc)
 	return ret;
 }
 
+static int rdma_post_cas(struct rdma_cm_id *id, void *context, void *addr,
+		struct ibv_mr *mr, int flags,
+		uint64_t remote_addr, uint32_t rkey, uint64_t expected, uint64_t desired)
+{
+	/*
+	A 64 bits value in a remote QP's virtual space is being read, compared with 
+	wr.atomic.compare_add and if they are equal, the value wr.atomic.swap is being 
+	written to the same memory address, in an atomic way. No Receive Request will 
+	be consumed in the remote QP. The original data, before the compare operation, 
+	is being written to the local memory buffers specified in sg_list
+	*/
+	struct ibv_sge sge;
+
+	sge.addr = (uint64_t) (uintptr_t) addr;
+	sge.length = (uint32_t) 64; // must be 64 bits
+	sge.lkey = mr ? mr->lkey : 0;
+
+	// return rdma_post_writev(id, context, &sge, 1, flags, remote_addr, rkey);
+
+	struct ibv_send_wr wr, *bad;
+
+	wr.wr_id = (uintptr_t) context;
+	wr.next = NULL;
+	wr.sg_list = &sge;
+	wr.num_sge = 1;
+	wr.opcode = IBV_WR_ATOMIC_CMP_AND_SWP;
+	wr.send_flags = flags;
+	wr.wr.atomic.remote_addr = remote_addr;
+	wr.wr.atomic.rkey = rkey;
+	wr.wr.atomic.compare_add = expected;
+	wr.wr.atomic.swap = desired;
+
+	return ibv_post_send(id->qp, &wr, &bad);
+}
+
 
 // class RemoteRegion : public CHeapObj<mtGC> {
 
@@ -347,6 +382,8 @@ public:
 	int rdma_send(char* buff);
 	int rdma_recv(char* buff);
 
+	int atomic_cas(uint64_t& previous, size_t offset, uint64_t expected, uint64_t desired);
+
 	int disconnect(DISCONNECT_CODE code);
 };
 
@@ -372,7 +409,8 @@ allocation is bump-pointing in remote mem region
 
 private:
 
-    ShenandoahHeap* _heap;
+    static ShenandoahHeap* _heap;
+	static RemoteMem* _remote_mem;
     size_t num_connections;
 	ReservedSpace _rs;
     struct rdma_cm_id* _listen_id;
@@ -389,6 +427,8 @@ private:
 public:
 
     RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs);
+
+	static RemoteMem* remote_mem();
     int establish_connections	();
     int disconnect				(DISCONNECT_CODE code);
 	// TODO: see if this should be deleted
@@ -402,10 +442,10 @@ public:
 
 
 	// getters
-	char*					base()				{ return _rs.base(); }
-	char*					end()				{ return _rs.end(); }
-	size_t					size()				{ return _rs.size(); }
-	size_t					size_per_server()	{ return _rs.size() / num_connections; }
+	char*					base()				const	{ return _rs.base(); }
+	char*					end()				const	{ return _rs.end(); }
+	size_t					size()				const	{ return _rs.size(); }
+	size_t					size_per_server()	const	{ return _rs.size() / num_connections; }
     struct rdma_cm_id ** 	listen_id()			{ return &_listen_id; }
 	size_t 				 	mr_size()			{ return size_per_server(); }
 
@@ -413,11 +453,26 @@ public:
 	void 	addr_to_pos	(char* addr, size_t& server_idx, size_t& offset);
 	char* 	pos_to_addr	(size_t serer_idx, size_t offset);
 
-	void write	(char* to_addr, char* from_buffer, size_t byte_length);
-	void write	(HeapWord* to_addr, HeapWord* from_buffer, size_t word_length);
+	// write
+	void	write			(char* to_addr, char* from_buffer, size_t byte_length);
+	void	write			(HeapWord* to_addr, HeapWord* from_buffer, size_t word_length);
+	template <typename T>
+	void	write			(T val, void* to_addr);
+	void	write_obj_header(oopDesc header, void* to_addr);
 
-	void read 	(char* from_addr, char* to_buffer, size_t byte_length);
-	void read 	(HeapWord* from_addr, HeapWord* to_buffer, size_t word_length);
+	// reads
+	void	read			(char* from_addr, char* to_buffer, size_t byte_length);
+	void	read 			(HeapWord* from_addr, HeapWord* to_buffer, size_t word_length);
+	template <typename T>
+	T		read			(void* from_addr);
+	oopDesc	read_obj_header	(void* from_addr);
+
+	// atomic cas
+	uint64_t remote_cas		(char* to_addr, uint64_t expected, uint64_t desired);
+
+	bool is_in(const void* p) const {
+		return p >= (void*)base() && p < (void*)end();
+	}
 
 	// testing funcs
     void perform_some_tests();

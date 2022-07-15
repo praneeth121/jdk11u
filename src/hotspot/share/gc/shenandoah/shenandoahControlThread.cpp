@@ -162,8 +162,11 @@ void ShenandoahControlThread::run_service() {
     } else {
       // Potential normal cycle: ask heuristics if it wants to act
       if (heuristics->should_start_gc()) {
+        tty->print_cr("Should start gc");
         mode = default_mode;
         cause = default_cause;
+      } else {
+        tty->print_cr("Not starting gc");
       }
 
       // Ask policy if this cycle wants to process references or unload classes
@@ -381,6 +384,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   //
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
+  tty->print_cr("Collection cycle begins ---------------------------------------------");
   if (check_cancellation_or_degen(ShenandoahHeap::_degenerated_outside_cycle)) return;
 
   GCIdMark gc_id_mark;
@@ -395,6 +399,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   heap->vmop_entry_init_mark();
 
   // Continue concurrent mark
+  tty->print_cr("Concurrent mark ---------------------------------------------");
   heap->entry_mark();
   if (check_cancellation_or_degen(ShenandoahHeap::_degenerated_mark)) return;
 
@@ -402,6 +407,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   heap->entry_preclean();
 
   // Complete marking under STW, and start evacuation
+  tty->print_cr("Final mark ---------------------------------------------");
   heap->vmop_entry_final_mark();
 
   // Final mark might have reclaimed some immediate garbage, kick cleanup to reclaim
@@ -418,6 +424,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   // If so, evac_in_progress would be unset by collection set preparation code.
   if (heap->is_evacuation_in_progress()) {
     // Concurrently evacuate
+    tty->print_cr("Concurrent evacuate ---------------------------------------------");
     heap->entry_evac();
     if (check_cancellation_or_degen(ShenandoahHeap::_degenerated_evac)) return;
 
@@ -431,6 +438,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
     // Update references freed up collection set, kick the cleanup to reclaim the space.
     heap->entry_cleanup_complete();
   }
+  tty->print_cr("Collection cycle ends ---------------------------------------------");
 
   // Cycle is complete
   heap->heuristics()->record_success_concurrent();

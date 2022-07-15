@@ -245,7 +245,7 @@ inline void ShenandoahHeap::clear_cancelled_gc() {
 
 inline HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size, bool is_remote) {
   assert(UseTLAB, "TLABs should be enabled");
-  tty->print_cr("Allocating using gclab");
+  // tty->print_cr("Allocating using gclab");
 
   PLAB* gclab = ShenandoahThreadLocalData::gclab(thread, is_remote);
   if (gclab == NULL) {
@@ -286,7 +286,7 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 #endif
     if (UseTLAB) {
       copy = allocate_from_gclab(thread, size);
-      tty->print_cr("gclab allocation finished, copy = %p ", copy);
+      // tty->print_cr("gclab allocation finished, copy = %p ", copy);
     }
     if (copy == NULL) {
       ShenandoahAllocRequest req = ShenandoahAllocRequest::for_shared_gc(size);
@@ -318,7 +318,7 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   if (result == copy_val) {
     // Successfully evacuated. Our copy is now the public one!
     shenandoah_assert_correct(NULL, copy_val);
-    tty->print_cr("Successfully evacuate the object");
+    // tty->print_cr("Successfully evacuate the object");
     return copy_val;
   }  else {
     // Failed to evacuate. We need to deal with the object that is left behind. Since this

@@ -94,7 +94,7 @@ HeapWord* ShenandoahFreeSet::allocate_single(ShenandoahAllocRequest& req, bool& 
     }
     case ShenandoahAllocRequest::_alloc_gclab:
     case ShenandoahAllocRequest::_alloc_shared_gc: {
-      tty->print_cr("GC allocation in region ...");
+      // tty->print_cr("GC allocation in region ...");
       // size_t is unsigned, need to dodge underflow when _leftmost = 0
 
       // Fast-path: try to allocate in the collector view first
@@ -144,7 +144,7 @@ HeapWord* ShenandoahFreeSet::allocate_single(ShenandoahAllocRequest& req, bool& 
 HeapWord* ShenandoahFreeSet::try_allocate_in(ShenandoahHeapRegion* r, ShenandoahAllocRequest& req, bool& in_new_region) {
   assert (!has_no_alloc_capacity(r), "Performance: should avoid full regions on this path: " SIZE_FORMAT, r->index());
 
-  tty->print_cr("Try to allocate in region idx: %lu", r->index());
+  // tty->print_cr("Try to allocate in region idx: %lu", r->index());
 
   try_recycle_trashed(r);
 
@@ -429,17 +429,19 @@ void ShenandoahFreeSet::rebuild() {
       // Do not add regions that would surely fail allocation
       if (has_no_alloc_capacity(region)) continue;
 
-      _capacity += alloc_capacity(region);
-      assert(_used <= _capacity, "must not use more than we have");
-
-      assert(!is_mutator_free(idx), "We are about to add it, it shouldn't be there already");
       if (region->is_local()) {
+        _capacity += alloc_capacity(region);
+        assert(_used <= _capacity, "must not use more than we have");
+
+        assert(!is_mutator_free(idx), "We are about to add it, it shouldn't be there already");
         _mutator_free_bitmap.set_bit(idx);
       }
     }
     // tty->print_cr("----------------------------------------");
   }
+  tty->print_cr("Init local capacity %lu | %lu regions", _capacity, _capacity/ShenandoahHeapRegion::region_size_bytes());
 
+  tty->print_cr("Setting aside some regions for local evac: ");
   // Evac reserve: reserve trailing space for evacuations
   // reserve space is a percentage of local space, remote space is always for collector
   // size_t to_reserve = _heap->max_capacity() / 100 * ShenandoahEvacReserve;
@@ -458,6 +460,7 @@ void ShenandoahFreeSet::rebuild() {
       reserved += ac;
     }
   }
+  tty->print_cr("Adjusted local capacity %lu | %lu regions", _capacity, _capacity/ShenandoahHeapRegion::region_size_bytes());
   
   tty->print_cr("Setting up remote region bitmap: ");
   // Remote region is mostly always ready for evac
@@ -465,11 +468,9 @@ void ShenandoahFreeSet::rebuild() {
     ShenandoahHeapRegion* region = _heap->get_region(idx);
     if (region->is_remote() && is_empty_or_trash(region)) {
       _collector_free_bitmap.set_bit(idx);
-      size_t ac = alloc_capacity(region);
-      _capacity -= ac;
-      reserved += ac;
     }
   }
+  tty->print_cr("Adjusted local capacity %lu | %lu regions", _capacity, _capacity/ShenandoahHeapRegion::region_size_bytes());
 
   recompute_bounds();
   assert_bounds();

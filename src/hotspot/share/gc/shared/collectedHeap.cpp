@@ -192,6 +192,7 @@ bool CollectedHeap::is_oop(oop object) const {
 
 // Memory state functions.
 
+RemoteMem* CollectedHeap::_remote_mem = NULL;
 
 CollectedHeap::CollectedHeap() :
   _is_gc_active(false),

@@ -82,7 +82,7 @@ void ShenandoahHeapRegion::report_illegal_transition(const char *method) {
 
 void ShenandoahHeapRegion::make_regular_allocation() {
   shenandoah_assert_heaplocked();
-  tty->print_cr("psuedo - allocating to remote region");
+  // tty->print_cr("psuedo - allocating to remote region");
   // if (is_local()) {
   switch (_state) {
     case _empty_uncommitted:
@@ -423,18 +423,6 @@ ShenandoahHeapRegion* ShenandoahHeapRegion::humongous_start_region() const {
 }
 
 void ShenandoahHeapRegion::recycle() {
-  if (is_remote()) {
-    tty->print_cr("Remore region should not go here");
-    set_top(bottom());
-    clear_live_data();
-
-    reset_alloc_metadata();
-
-    ShenandoahHeap::heap()->marking_context()->reset_top_at_mark_start(this);
-    set_update_watermark(bottom());
-    
-    return;
-  }
   set_top(bottom());
   clear_live_data();
 
@@ -651,21 +639,18 @@ size_t ShenandoahHeapRegion::setup_sizes(size_t max_heap_size) {
 }
 
 void ShenandoahHeapRegion::do_commit() {
+  if (is_remote()) return;
   ShenandoahHeap* heap = ShenandoahHeap::heap();
-  if (is_local()) {
-    if (!heap->is_heap_region_special() && !os::commit_memory((char *) bottom(), RegionSizeBytes, false)) {
-      report_java_out_of_memory("Unable to commit region");
-    }
-    if (!heap->commit_bitmap_slice(this)) {
-      report_java_out_of_memory("Unable to commit bitmaps for region");
-    }
-    if (AlwaysPreTouch) {
-      os::pretouch_memory(bottom(), end(), heap->pretouch_heap_page_size());
-    }
-    heap->increase_committed(ShenandoahHeapRegion::region_size_bytes());
-  } else {
-    // do something is region is remote
+  if (!heap->is_heap_region_special() && !os::commit_memory((char *) bottom(), RegionSizeBytes, false)) {
+    report_java_out_of_memory("Unable to commit region");
   }
+  if (!heap->commit_bitmap_slice(this)) {
+    report_java_out_of_memory("Unable to commit bitmaps for region");
+  }
+  if (AlwaysPreTouch) {
+    os::pretouch_memory(bottom(), end(), heap->pretouch_heap_page_size());
+  }
+  heap->increase_committed(ShenandoahHeapRegion::region_size_bytes());
 }
 
 void ShenandoahHeapRegion::do_uncommit() {

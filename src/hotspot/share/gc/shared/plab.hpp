@@ -48,6 +48,7 @@ protected:
   char      tail[32];
   static size_t AlignmentReserve;
 
+
   // Force future allocations to fail and queries for contains()
   // to return false. Returns the amount of unused space in this PLAB.
   size_t invalidate() {
@@ -60,7 +61,7 @@ protected:
 
   // Fill in remaining space with a dummy object and invalidate the PLAB. Returns
   // the amount of remaining space.
-  size_t retire_internal();
+  size_t retire_internal(bool is_remote=false);
 
   void add_undo_waste(HeapWord* obj, size_t word_sz);
 
@@ -75,6 +76,12 @@ public:
 
   static size_t size_required_for_allocation(size_t word_size) { return word_size + AlignmentReserve; }
 
+  //getters
+  HeapWord* bottom()        { return _bottom; }
+  HeapWord* top()           { return _top; }
+  HeapWord* end()           { return _end; }           // Last allocatable address + 1
+  HeapWord* hard_end()      { return _hard_end; }      // _end + AlignmentReserve
+  
   // Minimum PLAB size.
   static size_t min_size();
   // Maximum PLAB size.
@@ -139,7 +146,7 @@ public:
 
   // Fills in the unallocated portion of the buffer with a garbage object and updates
   // statistics. To be called during GC.
-  void retire();
+  void retire(bool is_remote=false);
 };
 
 // PLAB book-keeping.

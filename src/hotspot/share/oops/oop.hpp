@@ -31,6 +31,7 @@
 #include "oops/metadata.hpp"
 #include "runtime/atomic.hpp"
 #include "utilities/macros.hpp"
+// #include "gc/shenandoah/shenandoahHeap.hpp"
 
 // oopDesc is the top baseclass for objects classes. The {name}Desc classes describe
 // the format of Java objects so the fields can be accessed from C++.
@@ -96,7 +97,9 @@ class oopDesc {
   static inline void set_gc_epoch(HeapWord* mem, size_t new_value);
 
   inline Klass* klass() const;
+  inline Klass* klass_local() const;
   inline Klass* klass_or_null() const volatile;
+  inline Klass* klass_or_null_local() const volatile;
   inline Klass* klass_or_null_acquire() const volatile;
   static inline Klass** klass_addr(HeapWord* mem);
   static inline narrowKlass* compressed_klass_addr(HeapWord* mem);
@@ -117,6 +120,9 @@ class oopDesc {
   // size of object header, aligned to platform wordSize
   static int header_size() { return sizeof(oopDesc)/HeapWordSize; }
 
+  // rdma read header
+  inline oopDesc get_remote_header ();
+
   // Returns whether this is an instance of k or an instance of a subclass of k
   inline bool is_a(Klass* k) const;
 
@@ -125,7 +131,7 @@ class oopDesc {
 
   // Sometimes (for complicated concurrency-related reasons), it is useful
   // to be able to figure out the size of an object knowing its klass.
-  inline int size_given_klass(Klass* klass);
+  inline int size_given_klass(Klass* klass, void* remote_oop=NULL);
 
   // type test operations (inlined in oop.inline.hpp)
   inline bool is_instance()            const;
@@ -138,6 +144,10 @@ class oopDesc {
   bool is_array_noinline()             const;
   bool is_objArray_noinline()          const;
   bool is_typeArray_noinline()         const;
+
+  // remote mem
+  static inline bool is_remote_oop(void* mem);
+  inline bool is_remote_oop()                  const;
 
  protected:
   inline oop        as_oop() const { return const_cast<oopDesc*>(this); }

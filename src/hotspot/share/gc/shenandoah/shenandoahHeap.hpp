@@ -35,7 +35,7 @@
 #include "gc/shenandoah/shenandoahSharedVariables.hpp"
 #include "services/memoryManager.hpp"
 
-#include "memory/remoteMem.hpp"
+// #include "memory/remoteMem.hpp"
 
 class ConcurrentGCTimer;
 class ReferenceProcessor;
@@ -186,8 +186,6 @@ private:
   volatile size_t _committed;
   volatile size_t _bytes_allocated_since_gc_start;
   shenandoah_padding(1);
-
-  RemoteMem* _remote_mem;
 
 public:
   void increase_used(size_t bytes);
@@ -467,7 +465,6 @@ public:
 
   ShenandoahPhaseTimings*    phase_timings()     const { return _phase_timings;     }
 
-  RemoteMem*                 remote_mem()        const { return _remote_mem; }
 
   ShenandoahVerifier*        verifier();
 

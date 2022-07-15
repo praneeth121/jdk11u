@@ -44,46 +44,103 @@
 // We need a separate file to avoid circular references
 
 markOop  oopDesc::mark()      const {
+  if (is_remote_oop()) {
+    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*) this);
+    // return header.mark_raw();
+    // return (markOop) Universe::heap()->remote_mem()->read<uintptr_t>((char*)this + mark_offset_in_bytes());
+    markOop ret = NULL;
+    Universe::heap()->remote_mem()->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
+    return ret;
+  }
   return HeapAccess<MO_VOLATILE>::load_at(as_oop(), mark_offset_in_bytes());
 }
 
 markOop  oopDesc::mark_raw()  const {
+  if (is_remote_oop()) {
+    markOop ret;
+    Universe::heap()->remote_mem()->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
+    return ret;
+  }
   return _mark;
 }
 
 markOop* oopDesc::mark_addr_raw() const {
+  assert(!UseShenandoahGC, "Shenandoah should not call this function");
   return (markOop*) &_mark;
 }
 
-void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){ 
+void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){
+  assert(!is_remote_oop((void*) mem), "Should not be remote oop");
   *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = new_value;
 }
 
-void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){ 
+void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){
+  assert(!is_remote_oop((void*) mem), "Must not be remote oop");
   *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = new_value;
 }
 
 void oopDesc::set_mark(volatile markOop m) {
+  if (is_remote_oop()) {
+    // read header
+    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // header.set_mark_raw(m);
+    // Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
+    // write strate to remote
+    Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    return;
+  }
   HeapAccess<MO_VOLATILE>::store_at(as_oop(), mark_offset_in_bytes(), m);
 }
 
 void oopDesc::set_mark_raw(volatile markOop m) {
+  if (is_remote_oop()) {
+    tty->print_cr("set_mark_raw");
+    Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    return;
+  }
   _mark = m;
 }
 
 void oopDesc::set_mark_raw(HeapWord* mem, markOop m) {
+  // assert(!is_remote_oop((void*) mem), "Must not be remote oop");
+  if (is_remote_oop(mem)) {
+    tty->print_cr("release_set_mark");
+    Universe::heap()->remote_mem()->write((char*) mem + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    return;
+  }
   *(markOop*)(((char*)mem) + mark_offset_in_bytes()) = m;
 }
 
 void oopDesc::release_set_mark(markOop m) {
+  if (is_remote_oop()) {
+    tty->print_cr("release_set_mark");
+    Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    return;
+  }
   HeapAccess<MO_RELEASE>::store_at(as_oop(), mark_offset_in_bytes(), m);
 }
 
 markOop oopDesc::cas_set_mark(markOop new_mark, markOop old_mark) {
+  if (is_remote_oop()) {
+    tty->print_cr("markOop size = %lu, should be <= 8 bytes", sizeof(markOop));
+    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // markOop current_mark = header.mark_raw();
+    // if (memcmp(&current_mark, &old_mark, sizeof(markOop)) == 0) {
+    //   // current equals to old, store new
+    //   header.set_mark_raw(new_mark);
+    //   Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
+    // } 
+    return (markOop)(void*) Universe::heap()->remote_mem()->remote_cas((char*)this + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
+    // return header.mark_raw();
+  }
   return HeapAccess<>::atomic_cmpxchg_at(new_mark, as_oop(), mark_offset_in_bytes(), old_mark);
 }
 
 markOop oopDesc::cas_set_mark_raw(markOop new_mark, markOop old_mark, atomic_memory_order order) {
+  if (is_remote_oop()) {
+    tty->print_cr("markOop size = %lu, should be <= 8 bytes", sizeof(markOop));
+    return (markOop)(void*) Universe::heap()->remote_mem()->remote_cas(((char*)this) + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
+  }
   return Atomic::cmpxchg(new_mark, &_mark, old_mark, order);
 }
 
@@ -96,6 +153,27 @@ void oopDesc::init_mark_raw() {
 }
 
 Klass* oopDesc::klass() const {
+  // if (doEvacToRemote && UseShenandoahGC) {
+  //   CollectedHeap* heap = Universe::heap();
+  //   assert(heap != NULL, "Must not be null");
+  //   assert(heap->remote_mem() != NULL, "Must not be null");
+  //   if (heap->remote_mem()->is_in(this)) {
+  //     tty->print_cr("Getting klass from remote mem");
+  //     oopDesc header = heap->remote_mem()->read_obj_header((void*)this);
+  //     return (Klass*) load_klass_raw((oop) &header);
+  //   }
+  // }
+
+  if (is_remote_oop()) {
+    oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    return header.klass_local();
+  }
+
+  return klass_local();
+}
+
+Klass* oopDesc::klass_local() const {
+  assert(!is_remote_oop(), "Should not be remote oop");
   if (UseCompressedClassPointers) {
     return Klass::decode_klass_not_null(_metadata._compressed_klass);
   } else {
@@ -104,6 +182,15 @@ Klass* oopDesc::klass() const {
 }
 
 Klass* oopDesc::klass_or_null() const volatile {
+  if (is_remote_oop((void*)this)) {
+    oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    return header.klass_or_null_local();
+  }
+  return klass_or_null_local();
+}
+
+Klass* oopDesc::klass_or_null_local() const volatile {
+  assert(!is_remote_oop((void*)this), "Should not be remote oop");
   if (UseCompressedClassPointers) {
     return Klass::decode_klass(_metadata._compressed_klass);
   } else {
@@ -112,6 +199,7 @@ Klass* oopDesc::klass_or_null() const volatile {
 }
 
 Klass* oopDesc::klass_or_null_acquire() const volatile {
+  assert (!UseShenandoahGC, "Shenandoah GC should not call this");
   if (UseCompressedClassPointers) {
     // Workaround for non-const load_acquire parameter.
     const volatile narrowKlass* addr = &_metadata._compressed_klass;
@@ -152,6 +240,25 @@ narrowKlass* oopDesc::compressed_klass_addr() {
 
 void oopDesc::set_klass(Klass* k) {
   CHECK_SET_KLASS(k);
+  if (is_remote_oop()) {
+    // read header
+    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // if (UseCompressedClassPointers) {
+    //   *(header.compressed_klass_addr()) = Klass::encode_klass_not_null(k);
+    // } else {
+    //   *(header.klass_addr()) = k;
+    // }
+    // Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
+
+    if (UseCompressedClassPointers) {
+      narrowKlass nk = Klass::encode_klass_not_null(k);
+      Universe::heap()->remote_mem()->write((char*)compressed_klass_addr(), (char*)&nk, sizeof(narrowKlass));
+    } else {
+      Universe::heap()->remote_mem()->write((char*)klass_addr(), (char*)&k, sizeof(Klass*));
+    }
+    return;
+  }
+  assert(!is_remote_oop(), "Should not be remote oop");
   if (UseCompressedClassPointers) {
     *compressed_klass_addr() = Klass::encode_klass_not_null(k);
   } else {
@@ -161,6 +268,16 @@ void oopDesc::set_klass(Klass* k) {
 
 void oopDesc::release_set_klass(HeapWord* mem, Klass* klass) {
   CHECK_SET_KLASS(klass);
+  // assert(!is_remote_oop(), "Should not be remote oop");
+  if (is_remote_oop((void*) mem)) {
+    if (UseCompressedClassPointers) {
+      narrowKlass nk = Klass::encode_klass_not_null(klass);
+      Universe::heap()->remote_mem()->write((char*)compressed_klass_addr(mem), (char*)&nk, sizeof(narrowKlass));
+    } else {
+      Universe::heap()->remote_mem()->write((char*)klass_addr(mem), (char*)&klass, sizeof(Klass*));
+    }
+    return;
+  }
   if (UseCompressedClassPointers) {
     OrderAccess::release_store(compressed_klass_addr(mem),
                                Klass::encode_klass_not_null(klass));
@@ -188,6 +305,7 @@ void oopDesc::set_klass_gap(int v) {
 void oopDesc::set_klass_to_list_ptr(oop k) {
   // This is only to be used during GC, for from-space objects, so no
   // barrier is needed.
+  assert(!UseShenandoahGC, "Shenandoah should not call this");
   if (UseCompressedClassPointers) {
     _metadata._compressed_klass = (narrowKlass)CompressedOops::encode(k);  // may be null (parnew overflow handling)
   } else {
@@ -197,6 +315,7 @@ void oopDesc::set_klass_to_list_ptr(oop k) {
 
 oop oopDesc::list_ptr_from_klass() {
   // This is only to be used during GC, for from-space objects.
+  assert(!UseShenandoahGC, "Shenandoah should not call this");
   if (UseCompressedClassPointers) {
     return CompressedOops::decode((narrowOop)_metadata._compressed_klass);
   } else {
@@ -205,15 +324,25 @@ oop oopDesc::list_ptr_from_klass() {
   }
 }
 
+oopDesc oopDesc::get_remote_header () {
+  assert(is_remote_oop(), "must be remote oop");
+  return Universe::heap()->remote_mem()->read_obj_header((void*)this);
+}
+
 bool oopDesc::is_a(Klass* k) const {
   return klass()->is_subtype_of(k);
 }
 
 int oopDesc::size()  {
+  // if (is_remote_oop()) {
+  //   oopDesc header = get_remote_header();
+  //   return header.size_given_klass(header.klass(), this);
+  // }
+  // Remote oop handled in size_given_klass
   return size_given_klass(klass());
 }
 
-int oopDesc::size_given_klass(Klass* klass)  {
+int oopDesc::size_given_klass(Klass* klass, void* remote_oop)  {
   int lh = klass->layout_helper();
   int s;
 
@@ -241,7 +370,19 @@ int oopDesc::size_given_klass(Klass* klass)  {
       // length of the array, shift (multiply) it appropriately,
       // up to wordSize, add the header, and align to object size.
       size_t size_in_bytes;
-      size_t array_length = (size_t) ((arrayOop)this)->length();
+      // Dat mod
+      size_t array_length;
+      if (is_remote_oop()) {
+        // only header is local, payload is remote
+        tty->print_cr("Reading from remote");
+        int temp_length = 0;
+        Universe::heap()->remote_mem()->read((char*)this + arrayOopDesc::length_offset_in_bytes(), (char*)&temp_length, sizeof(int));
+        array_length = (size_t) temp_length;
+      } else {
+        // object is local, 
+        array_length = (size_t) ((arrayOop)this)->length();
+      }
+      //
       size_in_bytes = array_length << Klass::layout_helper_log2_element_size(lh);
       size_in_bytes += Klass::layout_helper_header_size(lh);
 
@@ -351,6 +492,16 @@ bool oopDesc::is_forwarded() const {
   // The extra heap check is needed since the obj might be locked, in which case the
   // mark would point to a stack location and have the sentinel bit cleared
   return mark_raw()->is_marked();
+}
+
+// remote mem
+bool oopDesc::is_remote_oop(void* mem) {
+  if (!Universe::heap()->remote_mem()) return false;
+  return Universe::heap()->remote_mem()->is_in((void*)mem);
+}
+
+bool oopDesc::is_remote_oop() const {
+  return is_remote_oop((void*)this);
 }
 
 // Used by scavengers
