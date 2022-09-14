@@ -61,7 +61,7 @@ protected:
 
   // Fill in remaining space with a dummy object and invalidate the PLAB. Returns
   // the amount of remaining space.
-  size_t retire_internal(bool is_remote=false);
+  size_t retire_internal();
 
   void add_undo_waste(HeapWord* obj, size_t word_sz);
 
@@ -94,9 +94,11 @@ public:
   HeapWord* allocate(size_t word_sz) {
     HeapWord* res = _top;
     if (pointer_delta(_end, _top) >= word_sz) {
+      // tty->print_cr("success allocation %lu from existing gclab: bottom %p top %lu, end %lu", word_sz, _bottom, pointer_delta(_top, _bottom), pointer_delta(_end, _bottom));
       _top = _top + word_sz;
       return res;
     } else {
+      // tty->print_cr("Fail allocation %lu from existing gclab: bottom %p top %lu, end %lu", word_sz, _bottom, pointer_delta(_top, _bottom), pointer_delta(_end, _bottom));
       return NULL;
     }
   }
@@ -146,7 +148,7 @@ public:
 
   // Fills in the unallocated portion of the buffer with a garbage object and updates
   // statistics. To be called during GC.
-  void retire(bool is_remote=false);
+  void retire();
 };
 
 // PLAB book-keeping.

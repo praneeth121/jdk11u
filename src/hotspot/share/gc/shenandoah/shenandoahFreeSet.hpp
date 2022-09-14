@@ -53,6 +53,7 @@ private:
   HeapWord* allocate_single(ShenandoahAllocRequest& req, bool& in_new_region);
   HeapWord* allocate_contiguous(ShenandoahAllocRequest& req);
 
+
   void flip_to_gc(ShenandoahHeapRegion* r);
 
   void recompute_bounds();
@@ -89,6 +90,7 @@ public:
   }
 
   HeapWord* allocate(ShenandoahAllocRequest& req, bool& in_new_region);
+  ShenandoahHeapRegion* allocate_temp_local_region();
   size_t unsafe_peek_free() const;
 
   double internal_fragmentation();

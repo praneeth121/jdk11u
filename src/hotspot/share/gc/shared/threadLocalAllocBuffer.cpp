@@ -116,6 +116,7 @@ void ThreadLocalAllocBuffer::accumulate_statistics() {
 // Waste accounting should be done in caller as appropriate; see,
 // for example, clear_before_allocation().
 void ThreadLocalAllocBuffer::make_parsable(bool retire, bool zap) {
+  // tty->print_cr("make parsable");
   if (end() != NULL) {
     invariants();
 

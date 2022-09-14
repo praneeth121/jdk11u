@@ -176,9 +176,12 @@ void ShenandoahAsserts::assert_in_heap(void* interior_loc, oop obj, const char *
 
 void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* file, int line) {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
-  if (heap->is_in_remote(obj)) {
-    // tty->print_cr("assert_correct: obj in remote");
-    return;
+  if (doEvacToRemote) {
+    assert(heap->remote_mem(), "remote mem must be init");
+    if (heap->remote_mem()->is_in((void*)obj)) {
+      tty->print_cr("assert_correct: obj in remote");
+      return;
+    }
   }
 
   // Step 1. Check that obj is correct.
@@ -221,7 +224,16 @@ void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* 
                     file, line);
     }
 
-    if (obj_klass != fwd->klass()) {
+    Klass* fwd_klass = fwd->klass();
+    if (obj_klass != fwd_klass) {
+      if (doEvacToRemote) {
+        assert(Universe::heap()->remote_mem(), "remote mem must be init");
+        void* buffering_addr = Universe::heap()->remote_mem()->get_corresponding_evac_buffer_address(fwd);
+        tty->print_cr("Object klass disagrees: obj1 %p klass1 %p | obj2 %p klass2 %p |  buf_obj %p buf_klass %p", 
+                    (void*)obj, (void*)obj_klass, 
+                    (void*)fwd, (void*)fwd_klass,
+                    (void*)buffering_addr, oop(buffering_addr)->klass_or_null_local());
+      }
       print_failure(_safe_oop, obj, interior_loc, NULL, "Shenandoah assert_correct failed",
                     "Forwardee klass disagrees with object class",
                     file, line);

@@ -44,7 +44,7 @@ HeapWord* ShenandoahHeapRegion::allocate(size_t size, ShenandoahAllocRequest::Ty
     assert(is_object_aligned(new_top), "new top breaks alignment: " PTR_FORMAT, p2i(new_top));
     assert(is_object_aligned(obj),     "obj is not aligned: "       PTR_FORMAT, p2i(obj));
 
-    tty->print_cr("New region allocation: %p ", obj);
+    // tty->print_cr("New region allocation: %p ", obj);
     return obj;
   } else {
     return NULL;
@@ -131,5 +131,16 @@ inline void ShenandoahHeapRegion::set_update_watermark_at_safepoint(HeapWord* w)
   assert(SafepointSynchronize::is_at_safepoint(), "Should be at Shenandoah safepoint");
   _update_watermark = w;
 }
+
+// inline void ShenandoahHeapRegion::set_temp_forwarding(ShenandoahHeapRegion* r) {
+// #ifdef ASSERT
+//   if (is_remote()) {
+//     assert(r->is_local(), "Must be the opposite");
+//   } else {
+//     assert(r->is_remote(), "Must be the opposite");
+//   }
+// #endif
+//   _temp_forwarding = r;
+// }
 
 #endif // SHARE_VM_GC_SHENANDOAH_SHENANDOAHHEAPREGION_INLINE_HPP

@@ -133,3 +133,8 @@ uint ShenandoahWorkerPolicy::calc_workers_for_conc_reset() {
                                                        Threads::number_of_non_daemon_threads());
   return _prev_conc_reset;
 }
+
+uint ShenandoahWorkerPolicy::calc_workers_for_stats_logging() {
+  // Stats collection is single-threaded
+  return 1;
+}

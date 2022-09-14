@@ -125,17 +125,17 @@ public:
     data(thread)->_remote_gclab_size = 0;
   }
 
-  static PLAB* gclab(Thread* thread, bool is_remote=false) {
+  static PLAB* gclab(Thread* thread, bool is_remote) {
     if (is_remote) return data(thread)->_remote_gclab;
     return data(thread)->_gclab;
   }
 
-  static size_t gclab_size(Thread* thread, bool is_remote=false) {
+  static size_t gclab_size(Thread* thread, bool is_remote) {
     if (is_remote) return data(thread)->_remote_gclab_size;
     return data(thread)->_gclab_size;
   }
 
-  static void set_gclab_size(Thread* thread, size_t v, bool is_remote=false) {
+  static void set_gclab_size(Thread* thread, size_t v, bool is_remote) {
     if (is_remote) { data(thread)->_remote_gclab_size = v; return;}
     data(thread)->_gclab_size = v;
   }

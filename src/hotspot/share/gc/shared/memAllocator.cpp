@@ -391,6 +391,9 @@ void MemAllocator::mem_clear(HeapWord* mem) const {
   const size_t hs = oopDesc::header_size();
   assert(_word_size >= hs, "unexpected object size");
   oopDesc::set_klass_gap(mem, 0);
+  // Dat mod
+  if (oopDesc::is_remote_oop(mem)) return;
+  //
   Copy::fill_to_aligned_words(mem + hs, _word_size - hs);
 }
 

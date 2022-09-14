@@ -35,6 +35,7 @@ inline HeapWord* ShenandoahForwarding::get_forwardee_raw(oop obj) {
 }
 
 inline HeapWord* ShenandoahForwarding::get_forwardee_raw_unchecked(oop obj) {
+  // assert(!oopDesc::is_remote_oop(obj), "Remote oop should not go here yet");
   // JVMTI and JFR code use mark words for marking objects for their needs.
   // On this path, we can encounter the "marked" object, but with NULL
   // fwdptr. That object is still not forwarded, and we need to return

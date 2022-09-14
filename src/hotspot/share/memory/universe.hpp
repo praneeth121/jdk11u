@@ -265,7 +265,11 @@ class Universe: AllStatic {
   static uintptr_t _verify_oop_mask;
   static uintptr_t _verify_oop_bits;
 
+  static uintptr_t _verify_remote_oop_mask;
+  static uintptr_t _verify_remote_oop_bits;
+
   static void calculate_verify_data(HeapWord* low_boundary, HeapWord* high_boundary) PRODUCT_RETURN;
+  static void calculate_verify_data_remote(HeapWord* low_boundary, HeapWord* high_boundary) PRODUCT_RETURN;
   static void compute_verify_oop_data();
 
  public:
@@ -530,6 +534,9 @@ class Universe: AllStatic {
   static uintptr_t verify_oop_bits()          PRODUCT_RETURN0;
   static uintptr_t verify_mark_bits()         PRODUCT_RETURN0;
   static uintptr_t verify_mark_mask()         PRODUCT_RETURN0;
+
+  static uintptr_t verify_remote_oop_mask()   PRODUCT_RETURN0;
+  static uintptr_t verify_remote_oop_bits()   PRODUCT_RETURN0;
 
   // Compiler support
   static int base_vtable_size()               { return _base_vtable_size; }

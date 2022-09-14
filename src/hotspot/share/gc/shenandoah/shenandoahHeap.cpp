@@ -877,17 +877,30 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, 
 
   // Retire current GCLAB, and allocate a new one.
   // Do nothing if plab is remote
-  PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  PLAB* gclab = ShenandoahThreadLocalData::gclab(thread, is_remote);
   // if (is_in_remote(gclab->bottom())) {
   //   tty->print_cr("Remote Plab detected");
+  // }
+  // tty->print_cr("top %p", gclab->top());
+  // tty->print_cr("hard_end %p", gclab->hard_end());
+
+  // tty->print_cr("top %p r %lu", gclab->top(), heap_region_index_containing(gclab->top()));
+  // tty->print_cr("hard_end %p r %lu", gclab->hard_end(), heap_region_index_containing(gclab->hard_end()));
+
+  // oop obj = oop(gclab->bottom());
+  // while (obj < gclab->top()){
+  //   tty->print_cr("oop %p, klass %p", (void*)obj, (void*)obj->klass());
+  //   obj = oop ((HeapWord*)obj + obj->size());
   // }
   gclab->retire();
 
   size_t actual_size = 0;
   HeapWord* gclab_buf = allocate_new_gclab(min_size, new_size, &actual_size, is_remote);
   if (gclab_buf == NULL) {
+    tty->print_cr("gc lab is null");
     return NULL;
   }
+  tty->print_cr("New gclab %p, region %lu, size %lu", gclab_buf, heap_region_index_containing(gclab_buf), actual_size);
 
   assert (size <= actual_size, "allocation should fit");
 
@@ -898,7 +911,8 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size, 
       Copy::zero_to_words(gclab_buf, actual_size);
     } else {
       assert(is_in_remote(gclab_buf), "Must be a remote address");
-      remote_mem()->zero_to_words(gclab_buf, actual_size);
+      // Note, do something here
+      // remote_mem()->zero_to_words(gclab_buf, actual_size);
     }
   } else {
     // ...and zap just allocated object.
@@ -940,7 +954,7 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t min_size,
                                              size_t* actual_size,
                                              bool is_remote) {
   // tty->print_cr("Allocating new gclab ... ");
-  ShenandoahAllocRequest req = ShenandoahAllocRequest::for_gclab(min_size, word_size);
+  ShenandoahAllocRequest req = ShenandoahAllocRequest::for_gclab(min_size, word_size, is_remote);
   HeapWord* res = allocate_memory(req);
   if (res != NULL) {
     *actual_size = req.actual_size();
@@ -1029,7 +1043,65 @@ HeapWord* ShenandoahHeap::allocate_memory(ShenandoahAllocRequest& req) {
 
 HeapWord* ShenandoahHeap::allocate_memory_under_lock(ShenandoahAllocRequest& req, bool& in_new_region) {
   ShenandoahHeapLocker locker(lock());
-  return _free_set->allocate(req, in_new_region);
+  HeapWord* ret = _free_set->allocate(req, in_new_region);
+
+  // Dat mod
+  // if (doEvacToRemote && in_new_region && _heap->remote_mem()->is_in(ret)) {
+  //   // for gclab and gc_share
+  //   // a new remote region trigger a creation or reuse of rdma buffer, a buffer is exactly a heap region size
+  //   assert(ret != NULL, "Result must not be null");
+  //   ShenandoahHeapRegion* remote_r = heap_region_containing(ret);
+  //   tty->print_cr("Remote Region id: %lu", remote_r->index());
+  //   assert(remote_r->get_temp_forwarding() == NULL, "First thread to allocate a new remote region, there should not be a temp local forwarding yet");
+  //   ShenandoahHeapRegion* local_r = _free_set->allocate_temp_local_region();
+
+  //   // make regions forwarding to each other
+  //   remote_r->make_temp_remote();
+  //   remote_r->set_temp_forwarding(local_r);
+  //   local_r->set_temp_forwarding(remote_r);
+
+  //   // remember to write local temp region to remote temp region
+
+  //   // remember to redirect references from remote temp to local temp for every object access
+
+  //   // remmeber to increase access counter for every access, function must be static
+    
+  // }
+
+  // Dat mod
+  if (doEvacToRemote && req.is_gc_alloc()) {
+    RemoteMem* r_mem = _heap->remote_mem();
+    assert(r_mem, "r_mem must have been initialized");
+    if (r_mem->is_in(ret)) {
+      // Check to see if other threads are still working on 
+      assert(ret, "Result must not be null");
+      // tty->print_cr("Ret: %p", ret);
+      ShenandoahHeapRegion* remote_r = heap_region_containing(ret);
+      tty->print_cr("remote_r: %lu", remote_r->index());
+      r_mem->record_new_tlab(req.actual_size());
+      // tty->print_cr("Finish record new tlab");
+      if (remote_r->evac_bottom() == NULL) {
+        tty->print_cr("Evac bottom is null, set it");
+        // we are the first thread of old region or we are in a new region
+        // set up evac bottom to be ret
+        // record the starting offset in rdma buffer
+        r_mem->add_region_to_evac_set(remote_r);
+        remote_r->set_evac_bottom(ret);
+        remote_r->set_rdma_buffer_offset_in_words(r_mem->current_buffer_offset_in_words());
+        // reset the above values after rdma writes
+      } else {
+        // non-first threads do nothing
+        assert(!in_new_region, "No way this is the first allocation to a new region");
+      }
+      // tty->print_cr("is gc alloc, ret: %p", ret);
+    } else {
+      // ret is local
+
+      ShenandoahHeapRegion* local_r = heap_region_containing(ret);
+      tty->print_cr("local_r: %lu", local_r->index());
+    }
+  }
+  return ret;
 }
 
 HeapWord* ShenandoahHeap::mem_allocate(size_t size,
@@ -1186,9 +1258,16 @@ void ShenandoahHeap::trash_humongous_region_at(ShenandoahHeapRegion* start) {
 class ShenandoahRetireGCLABClosure : public ThreadClosure {
 public:
   void do_thread(Thread* thread) {
-    PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+    PLAB* gclab = NULL;
+    gclab = ShenandoahThreadLocalData::gclab(thread, false);
     assert(gclab != NULL, "GCLAB should be initialized for %s", thread->name());
     gclab->retire();
+
+    gclab = NULL;
+    gclab = ShenandoahThreadLocalData::gclab(thread, true);
+    assert(gclab != NULL, "GCLAB should be initialized for %s", thread->name());
+    gclab->retire();
+
   }
 };
 
@@ -1266,10 +1345,19 @@ size_t ShenandoahHeap::max_tlab_size() const {
 class ShenandoahRetireAndResetGCLABClosure : public ThreadClosure {
 public:
   void do_thread(Thread* thread) {
-    PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+    PLAB* gclab = NULL;
+    gclab = ShenandoahThreadLocalData::gclab(thread, false);
     gclab->retire();
-    if (ShenandoahThreadLocalData::gclab_size(thread) > 0) {
-      ShenandoahThreadLocalData::set_gclab_size(thread, 0);
+    if (ShenandoahThreadLocalData::gclab_size(thread, false) > 0) {
+      ShenandoahThreadLocalData::set_gclab_size(thread, 0, false);
+    }
+
+
+    gclab = NULL;
+    gclab = ShenandoahThreadLocalData::gclab(thread, true);
+    gclab->retire();
+    if (ShenandoahThreadLocalData::gclab_size(thread, true) > 0) {
+      ShenandoahThreadLocalData::set_gclab_size(thread, 0, true);
     }
   }
 };
@@ -1657,6 +1745,7 @@ void ShenandoahHeap::op_final_mark() {
   // evacuate roots right after finishing marking, so that we don't
   // get unmarked objects in the roots.
 
+
   if (!cancelled_gc()) {
     concurrent_mark()->finish_mark_from_roots(/* full_gc = */ false);
 
@@ -1692,6 +1781,7 @@ void ShenandoahHeap::op_final_mark() {
       ShenandoahGCSubPhase phase(ShenandoahPhaseTimings::choose_cset);
       ShenandoahHeapLocker locker(lock());
       _collection_set->clear();
+      if (remote_mem()) remote_mem()->clear_evac_set();
       heuristics()->choose_collection_set(_collection_set);
     }
 
@@ -1750,6 +1840,7 @@ void ShenandoahHeap::op_final_mark() {
       rp->verify_no_references_recorded();
     }
   }
+
 }
 
 void ShenandoahHeap::op_conc_evac() {
@@ -2350,9 +2441,22 @@ void ShenandoahHeap::op_init_updaterefs() {
 
   set_evacuation_in_progress(false);
 
+  // now we officially rdma write remotely evacuated objects to remote mem
+
+
+  // make sure update ref is handled properly by take care of oop closure computation
+
   {
     ShenandoahGCSubPhase phase(ShenandoahPhaseTimings::init_update_refs_retire_gclabs);
     retire_and_reset_gclabs();
+  }
+
+  if (doEvacToRemote) {
+    assert(remote_mem() != NULL, "Evac to remote, must not be null");
+    remote_mem()->flush_evac_buff();
+  }
+  else {
+    assert(remote_mem() == NULL, "Not evac to remote, must be null");
   }
 
   if (ShenandoahVerify) {
@@ -2463,6 +2567,145 @@ void ShenandoahHeap::op_final_updaterefs() {
     ShenandoahHeapLocker locker(lock());
     _free_set->rebuild();
   }
+}
+
+void ShenandoahHeap::op_stats_logging() {
+  assert(ShenandoahSafepoint::is_at_shenandoah_safepoint(), "must be at safepoint");
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  tty->print_cr("Stats logging ... ");
+
+  // ShenandoahRegionIterator regions;
+  // regions.reset();
+  // HeapWord* obj_addr = NULL;
+  // ShenandoahHeapRegion* r = regions.next();
+  // ShenandoahMarkingContext* const ctx = heap->complete_marking_context();
+  // while (r != NULL) {
+  //   // if (r->is_active() && !r->is_cset()) {
+  //   //   tty->print_cr("Iterating region %lu", r->index());
+  //   //   // r->oop_iterate(&cl);
+  //   //   _heap->marked_object_iterate(r, )
+
+  //   // }
+  //   ShenandoahStatsCountingObjectClosure cl(heap);
+  //   HeapWord* tams = ctx->top_at_mark_start(r);
+  //   marked_object_iterate(r, &cl, tams);
+  //   r = regions.next();
+  // }
+
+  // for (size_t i = 0; i < _heap->num_regions(); i++) {
+  //   if (get_region(i)->is_active()) {
+  //     increase_used_by_regions(get_region(i)->used());
+  //   }
+  // }
+
+
+
+  // Cycle is complete
+
+  // log_info(gc)("Dat log --- cycle is complete\n"
+  //               "Current gc epoch: %lu\n"
+  //               "heap: ______\n"
+  //               "capacity: %lu\n"
+  //               "soft_max_capacity: %lu\n"
+  //               "used: %lu\n"
+  //               "used_by_regions: %lu\n"
+  //               "committed: %lu\n"
+  //               "bytes_allocated_since_gc_start: %lu\n"
+  //               "bytes_allocated_since_objects_scan: %lu\n"
+  //               "total_marked_objects: %lu\n"
+  //               "total_object_size: %lu\n",
+  //               oopDesc::static_gc_epoch,
+  //               heap->capacity(),
+  //               heap->soft_max_capacity(),
+  //               heap->used(),
+  //               heap->used_by_regions(),
+  //               heap->committed(),
+  //               heap->bytes_allocated_since_gc_start(),
+  //               heap->bytes_allocated_since_objects_scan(),
+  //               heap->total_marked_objects(),
+  //               heap->total_object_size());
+  // for (JavaThreadIteratorWithHandle jtiwh; JavaThread *thread = jtiwh.next(); ) {
+  //   // thread->tlab().accumulate_statistics();
+  //   // thread->tlab().initialize_statistics();
+  //   // thread->tlab().used_bytes();
+  //   // thread->
+  //   PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  //   tty->print_cr("jthread tlab capacity %lu, free %lu", gclab->word_sz(), gclab->words_remaining());
+  // }
+
+  // assert(SafepointSynchronize::is_at_safepoint(), "Must be at a safepoint");
+  // for (NonJavaThread::Iterator njti; !njti.end(); njti.step()) {
+  //   Thread *thread = njti.current();
+  //   PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  //   tty->print_cr("non-jthread tlab capacity %lu, free %lu", gclab->word_sz(), gclab->words_remaining());
+  // }
+  // log_info(gc)("Obj count ac histogram");
+  // for (int i = 0; i < 30; i++){
+  //   log_info(gc)("\t%d: %lu", i, heap->histogram()[i]);
+  // }
+
+  // log_info(gc)("Obj size ac histogram");
+  // for (int i = 0; i < 30; i++){
+  //   log_info(gc)("\t%d: %lu", i, heap->size_histogram()[i]);
+  // }
+
+  // log_info(gc)("Valid/invalid oop stats mark\n"
+  //               "valid_count: %lu\n"
+  //               "valid_size: %lu words\n"
+  //               "invalid_count: %lu\n"
+  //               "invalid_size: %lu words\n"
+  //               "dummy_count: %lu\n"
+  //               "dummy_size: %lu words\n",
+  //               heap->oop_stats_mark(true, true),
+  //               heap->oop_stats_mark(true, false),
+  //               heap->oop_stats_mark(false, true),
+  //               heap->oop_stats_mark(false, false),
+  //               heap->dummy_oop_stats_mark(true),
+  //               heap->dummy_oop_stats_mark(false));
+
+  // log_info(gc)("Valid/invalid oop stats evac\n"
+  //               "valid_count_below_tams: %lu bytes\n"
+  //               "valid_size_below_tams: %lu bytes\n"
+  //               "invalid_count_below_tams: %lu bytes\n"
+  //               "invalid_size_below_tams: %lu bytes\n\n"
+  //               "valid_count_above_tams: %lu bytes\n"
+  //               "valid_size_above_tams: %lu bytes\n"
+  //               "invalid_count_above_tams: %lu bytes\n"
+  //               "invalid_size_above_tams: %lu bytes\n",
+  //               heap->oop_stats_evac(true, true, true),
+  //               heap->oop_stats_evac(true, false, true),
+  //               heap->oop_stats_evac(false, true, true),
+  //               heap->oop_stats_evac(false, false, true),
+  //               heap->oop_stats_evac(true, true, false),
+  //               heap->oop_stats_evac(true, false, false),
+  //               heap->oop_stats_evac(false, true, false),
+  //               heap->oop_stats_evac(false, false, false));
+
+
+  // heap->reset_histogram();
+  // heap->reset_oop_stats_evac();
+  // heap->reset_oop_stats_mark();
+  // heap->reset_bytes_allocated_since_objects_scan();
+  // heap->reset_used_by_regions();
+  // heap->reset_total_marked_objects();
+  // heap->reset_total_object_size();
+  // heap->set_after_heap_scan(false);
+  oopDesc::static_gc_epoch += 1;
+  log_info(gc)("Current static gc epoch %lu", oopDesc::static_gc_epoch);
+
+  // log_info(gc)("Valid/invalid oop stats mark after reset\n"
+  //               "valid_count post reset: %lu\n"
+  //               "valid_size post reset: %lu words\n"
+  //               "invalid_count post reset: %lu\n"
+  //               "invalid_size post reset: %lu words\n"
+  //               "dummy_count post reset: %lu\n"
+  //               "dummy_size post reset: %lu words\n",
+  //               heap->oop_stats_mark(true, true),
+  //               heap->oop_stats_mark(true, false),
+  //               heap->oop_stats_mark(false, true),
+  //               heap->oop_stats_mark(false, false),
+  //               heap->dummy_oop_stats_mark(true),
+  //               heap->dummy_oop_stats_mark(false));
 }
 
 void ShenandoahHeap::print_extended_on(outputStream *st) const {
@@ -2586,6 +2829,29 @@ void ShenandoahHeap::vmop_entry_final_updaterefs() {
   try_inject_alloc_failure();
   VM_ShenandoahFinalUpdateRefs op;
   VMThread::execute(&op);
+}
+
+void ShenandoahHeap::vmop_entry_stats_logging() {
+  TraceCollectorStats tcs(monitoring_support()->stw_collection_counters());
+  ShenandoahGCPhase phase(ShenandoahPhaseTimings::stats_logging_gross);
+
+  try_inject_alloc_failure();
+  VM_ShenandoahStatsLogging op;
+  VMThread::execute(&op);
+}
+
+void ShenandoahHeap::entry_stats_logging() {
+  static const char* msg = "Pause Stats Logging";
+  ShenandoahPausePhase gc_phase(msg);
+  EventMark em("%s", msg);
+
+  ShenandoahGCPhase phase(ShenandoahPhaseTimings::stats_logging);
+
+  ShenandoahWorkerScope scope(workers(),
+                              ShenandoahWorkerPolicy::calc_workers_for_stats_logging(),
+                              "stats collection");
+
+  op_stats_logging();
 }
 
 void ShenandoahHeap::vmop_entry_full(GCCause::Cause cause) {
@@ -2747,6 +3013,7 @@ void ShenandoahHeap::entry_cleanup_early() {
   ShenandoahGCSubPhase phase(ShenandoahPhaseTimings::conc_cleanup_early);
 
   // This phase does not use workers, no need for setup
+  // assert(false, "entry_cleanup_early");
 
   try_inject_alloc_failure();
   op_cleanup_early();
@@ -2810,6 +3077,7 @@ void ShenandoahHeap::entry_uncommit(double shrink_before, size_t shrink_until) {
 
 void ShenandoahHeap::try_inject_alloc_failure() {
   if (ShenandoahAllocFailureALot && !cancelled_gc() && ((os::random() % 1000) > 950)) {
+    assert(false, "Should not go here");
     _inject_alloc_failure.set();
     os::naked_short_sleep(1);
     if (cancelled_gc()) {

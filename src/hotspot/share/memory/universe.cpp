@@ -149,6 +149,9 @@ int             Universe::_verify_count = 0;
 uintptr_t       Universe::_verify_oop_mask = 0;
 uintptr_t       Universe::_verify_oop_bits = (uintptr_t) -1;
 
+uintptr_t       Universe::_verify_remote_oop_mask = 0;
+uintptr_t       Universe::_verify_remote_oop_bits = (uintptr_t) -1;
+
 int             Universe::_base_vtable_size = 0;
 bool            Universe::_bootstrapping = false;
 bool            Universe::_module_initialized = false;
@@ -1295,6 +1298,38 @@ void Universe::calculate_verify_data(HeapWord* low_boundary, HeapWord* high_boun
   _verify_oop_bits = bits;
 }
 
+void Universe::calculate_verify_data_remote(HeapWord* low_boundary, HeapWord* high_boundary) {
+  assert(low_boundary < high_boundary, "bad interval");
+
+  // decide which low-order bits we require to be clear:
+  size_t alignSize = MinObjAlignmentInBytes;
+  size_t min_object_size = CollectedHeap::min_fill_size();
+
+  // make an inclusive limit:
+  uintptr_t max = (uintptr_t)high_boundary - min_object_size*wordSize;
+  uintptr_t min = (uintptr_t)low_boundary;
+  assert(min < max, "bad interval");
+  uintptr_t diff = max ^ min;
+
+  // throw away enough low-order bits to make the diff vanish
+  uintptr_t mask = (uintptr_t)(-1);
+  while ((mask & diff) != 0)
+    mask <<= 1;
+  uintptr_t bits = (min & mask);
+  assert(bits == (max & mask), "correct mask");
+  // check an intermediate value between min and max, just to make sure:
+  assert(bits == ((min + (max-min)/2) & mask), "correct mask");
+
+  // require address alignment, too:
+  mask |= (alignSize - 1);
+
+  if (!(_verify_remote_oop_mask == 0 && _verify_oop_bits == (uintptr_t)-1)) {
+    assert(_verify_remote_oop_mask == mask && _verify_oop_bits == bits, "mask stability");
+  }
+  _verify_remote_oop_mask = mask;
+  _verify_remote_oop_bits = bits;
+}
+
 // Oop verification (see MacroAssembler::verify_oop)
 
 uintptr_t Universe::verify_oop_mask() {
@@ -1307,6 +1342,20 @@ uintptr_t Universe::verify_oop_bits() {
   MemRegion m = heap()->reserved_region();
   calculate_verify_data(m.start(), m.end());
   return _verify_oop_bits;
+}
+
+uintptr_t Universe::verify_remote_oop_mask() {
+  RemoteMem* rm = heap()->remote_mem();
+  assert(rm, "remote mem must be init");
+  calculate_verify_data_remote((HeapWord*)rm->base(), (HeapWord*)rm->end());
+  return _verify_remote_oop_mask;
+}
+
+uintptr_t Universe::verify_remote_oop_bits() {
+  RemoteMem* rm = heap()->remote_mem();
+  assert(rm, "remote mem must be init");
+  calculate_verify_data_remote((HeapWord*)rm->base(), (HeapWord*)rm->end());
+  return _verify_remote_oop_bits;
 }
 
 uintptr_t Universe::verify_mark_mask() {

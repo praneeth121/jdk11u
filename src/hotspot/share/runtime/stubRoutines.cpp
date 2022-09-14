@@ -59,6 +59,7 @@ address StubRoutines::_throw_StackOverflowError_entry           = NULL;
 address StubRoutines::_throw_delayed_StackOverflowError_entry   = NULL;
 jint    StubRoutines::_verify_oop_count                         = 0;
 address StubRoutines::_verify_oop_subroutine_entry              = NULL;
+address StubRoutines::_verify_remote_oop_subroutine_entry       = NULL;
 address StubRoutines::_atomic_xchg_entry                        = NULL;
 address StubRoutines::_atomic_xchg_long_entry                   = NULL;
 address StubRoutines::_atomic_store_entry                       = NULL;

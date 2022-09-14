@@ -33,12 +33,17 @@ class InterpreterMacroAssembler;
 
 class BarrierSetAssembler: public CHeapObj<mtGC> {
 private:
+
+
   void incr_allocated_bytes(MacroAssembler* masm, Register thread,
                             Register var_size_in_bytes,
                             int con_size_in_bytes,
                             Register t1);
 
+
 public:
+  static address _rdma_load_barrier;
+  
   virtual void arraycopy_prologue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                   Register src, Register dst, Register count) {}
   virtual void arraycopy_epilogue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
@@ -79,6 +84,16 @@ public:
                              Label& slow_case);
 
   virtual void barrier_stubs_init() {}
+
+  virtual void potential_load_from_remote(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
+  Register dst, Address src, Register tmp1, Register tmp_thread, Label& load_done);
+
+  virtual void potential_store_to_remote(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
+  Address dst, Register val, Register tmp1, Register tmp2);
+
+  address generate_rdma_load_barrier(StubCodeGenerator* cgen);
+
+  static address rdma_load_barrier();
 };
 
 #endif // CPU_X86_GC_SHARED_BARRIERSETASSEMBLER_X86_HPP

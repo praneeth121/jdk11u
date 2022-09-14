@@ -2346,6 +2346,8 @@ ContinueInNewThread(InvocationFunctions* ifn, jlong threadStackSize,
       args.what = what;
       args.ifn = *ifn;
 
+      printf("What %p\n", what);
+
       rslt = CallJavaMainInNewThread(threadStackSize, (void*)&args);
       /* If the caller has deemed there is an error we
        * simply return that, otherwise we return the value of

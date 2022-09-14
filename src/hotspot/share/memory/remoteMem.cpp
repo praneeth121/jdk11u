@@ -1,5 +1,7 @@
 // #include "memory/remoteMem.hpp"
-#include "gc/shenandoah/shenandoahHeap.hpp"
+// #include "gc/shenandoah/shenandoahHeap.hpp"
+#include "gc/shenandoah/shenandoahHeapRegion.inline.hpp"
+#include "memory/resourceArea.inline.hpp"
 
 ShenandoahHeap* RemoteMem::_heap = NULL;
 RemoteMem* RemoteMem::_remote_mem = NULL;
@@ -167,9 +169,9 @@ int RDMAServer::rdma_read(char* buffer, size_t length, size_t offset) {
 	
 	tty->print_cr("RDMA read ...");
 
-	memset(rdma_buff, 0, RW_BUFFER_SIZE);
+	memset(comm_buff(), 0, RW_BUFFER_SIZE);
 
-	ret = rdma_post_read(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)(mr->start_addr())+offset), mr->rkey());
+	ret = rdma_post_read(cm_id, NULL, comm_buff(), length, comm_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)(mr->start_addr())+offset), mr->rkey());
 	if (ret) {
 		perror("Error rdma read");
 		return disconnect(out_disconnect);
@@ -178,25 +180,26 @@ int RDMAServer::rdma_read(char* buffer, size_t length, size_t offset) {
 		ret = ibv_poll_cq(cm_id->send_cq, 1, &wc);
 	} while (ret == 0);
 
-	// get_wc_status(&wc);
+	get_wc_status(&wc);
 
-	memcpy(buffer, rdma_buff, length);
+	memcpy(buffer, comm_buff(), length);
 
 	return ret;	
 }
 
 int RDMAServer::rdma_write(char* buffer, size_t length, size_t offset) {
+	assert(false, "not writing anything yet");
 	int ret;
 	
 	// MemoryRegion* mr = get_current_mr(length);
 	assert(length < mr->free(), "No valid free space");
-	// tty->print_cr("RDMA write ...");
+	tty->print_cr("RDMA write ...");
 
-	memset(rdma_buff, 0, RW_BUFFER_SIZE);
+	memset(comm_buff(), 0, RW_BUFFER_SIZE);
 	
-	memcpy(rdma_buff, buffer, length);
+	memcpy(comm_buff(), buffer, length);
 
-	ret = rdma_post_write(cm_id, NULL, rdma_buff, length, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey());
+	ret = rdma_post_write(cm_id, NULL, comm_buff(), length, comm_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey());
 	if (ret) {
 		perror("Error rdma write");
 		return disconnect(out_disconnect);
@@ -213,9 +216,9 @@ int RDMAServer::rdma_write(char* buffer, size_t length, size_t offset) {
 
 int RDMAServer::atomic_cas(uint64_t& previous, size_t offset, uint64_t expected, uint64_t desired) {
 	int ret;
-	memset(rdma_buff, 0, RW_BUFFER_SIZE);
+	memset(comm_buff(), 0, RW_BUFFER_SIZE);
 	
-	ret = rdma_post_cas(cm_id, NULL, rdma_buff, rdma_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey(), expected, desired);
+	ret = rdma_post_cas(cm_id, NULL, comm_buff(), comm_mr, IBV_SEND_SIGNALED, (uint64_t)((char*)mr->start_addr()) + offset, mr->rkey(), expected, desired);
 	if (ret) {
 		perror("Error atomic cas");
 		return disconnect(out_disconnect);
@@ -225,7 +228,7 @@ int RDMAServer::atomic_cas(uint64_t& previous, size_t offset, uint64_t expected,
 		ret = ibv_poll_cq(cm_id->send_cq, 1, &wc);
 	} while (ret == 0);
 	
-	memcpy(&previous, rdma_buff, sizeof(uint64_t));
+	memcpy(&previous, comm_buff(), sizeof(uint64_t));
 
 	return ret;
 }
@@ -294,16 +297,15 @@ MemoryRegion::MemoryRegion(uint32_t rkey, void* start_addr, size_t mr_size) :
 
 
 // =================RDMAServer=============================
-RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
+RDMAServer:: RDMAServer(int idx, RemoteMem* remote_mem):
 	idx(idx),
-	connection(connection),
+	_remote_mem(remote_mem),
 	mr(NULL),
 	next_empty_idx(0),
 	send_flags(0),
 	wc(),
-	send_msg(),
-	recv_msg(),
-	rdma_buff(),
+	send_msg(NEW_C_HEAP_ARRAY(char, BUFFER_SIZE, mtGC)),
+	recv_msg(NEW_C_HEAP_ARRAY(char, BUFFER_SIZE, mtGC)),
 	recv_mr(NULL),
 	send_mr(NULL),
 	rdma_mr(NULL),
@@ -318,11 +320,11 @@ RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
 	int ret;
 
 	tty->print_cr("Getting connection request ...");
-	ret = rdma_get_request(*connection->listen_id(), &cm_id);
+	ret = rdma_get_request(*_remote_mem->listen_id(), &cm_id);
 	// ret = rdma_get_request(NULL, NULL);
 	if (ret) {
 		perror("rdma_get_request");
-        connection->disconnect(out_destroy_listen_ep);
+        _remote_mem->disconnect(out_destroy_listen_ep);
 		// goto out_destroy_listen_ep;
 	}
 
@@ -351,7 +353,7 @@ RDMAServer:: RDMAServer(int idx, RemoteMem* connection):
 	
 	register_comm_mr();		// to send recv control signals
 	register_rdma_mr();		// Buffer and region setup for local to read/write to remote regions
-	mr = reg_new_mr(connection->mr_size());
+	mr = reg_new_mr(_remote_mem->mr_size());
 }
 
 int RDMAServer::send_comm_code(COMM_CODE code, size_t optional_val) {
@@ -390,7 +392,7 @@ int RDMAServer::disconnect(DISCONNECT_CODE code) {
             rdma_disconnect(cm_id);
         case out_destroy_listen_ep:
         case out_free_addrinfo:
-			connection->disconnect(code);
+			_remote_mem->disconnect(code);
         case out_dereg_send:
             if ((send_flags & IBV_SEND_INLINE) == 0)
                 ibv_dereg_mr(send_mr);
@@ -414,7 +416,7 @@ MemoryRegion* RDMAServer::reg_new_mr(size_t byte_size) {
 	ret = rdma_post_recv(cm_id, NULL, recv_msg, 16, recv_mr);
 	if (ret) {
 		perror("rdma_post_recv");
-		connection->disconnect(out_dereg_send);
+		_remote_mem->disconnect(out_dereg_send);
 	}
 
 
@@ -422,7 +424,7 @@ MemoryRegion* RDMAServer::reg_new_mr(size_t byte_size) {
 	while ((ret = rdma_get_recv_comp(cm_id, &wc)) == 0);
 	if (ret < 0) {
 		perror("rdma_get_recv_comp");
-		connection->disconnect(out_disconnect);
+		_remote_mem->disconnect(out_disconnect);
 	}
 
 	// extract information
@@ -471,12 +473,13 @@ int RDMAServer::register_comm_mr() {
 }
 
 int RDMAServer::register_rdma_mr() {
-	rdma_mr = ibv_reg_mr(cm_id->pd, rdma_buff, RW_BUFFER_SIZE, IBV_ACCESS_LOCAL_WRITE);
+	rdma_mr = ibv_reg_mr(cm_id->pd, _remote_mem->rdma_buff(), ShenandoahHeapRegion::region_size_bytes(), IBV_ACCESS_LOCAL_WRITE);
+	comm_mr = ibv_reg_mr(cm_id->pd, _remote_mem->comm_buff(), ShenandoahHeapRegion::region_size_bytes(), IBV_ACCESS_LOCAL_WRITE);
 	return 0;
 }
 
 size_t RDMAServer::mr_size() {
-	return connection->mr_size();
+	return _remote_mem->mr_size();
 }
 
 MemoryRegion* RDMAServer::get_current_mr(size_t length) {
@@ -501,6 +504,14 @@ MemoryRegion* RDMAServer::get_current_mr(size_t length) {
 	
 }
 
+char* RDMAServer::rdma_buff() {
+	return _remote_mem->rdma_buff();
+}
+
+char* RDMAServer::comm_buff() {
+	return _remote_mem->comm_buff();
+}
+
 
 // =================RDMAConnect============================= 
 
@@ -508,17 +519,35 @@ MemoryRegion* RDMAServer::get_current_mr(size_t length) {
 RemoteMem::RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs) :
 	num_connections(num_connections),
 	_rs(rs),
+	_rdma_buff(NULL),
+	_comm_buff(NULL),
 	_listen_id(NULL),
 	server_arr(),
-	res(NULL)
+	res(NULL),
+	_current_buffer_offset_in_words(0),
+	_evacuation_set(NEW_C_HEAP_ARRAY(jbyte, heap->num_regions(), mtGC))
 {
+	assert(UseShenandoahGC, "Only Shenandoah can use this module");
 	_heap = heap;
 	_remote_mem = this;
+	// _rdma_buff = (char*)malloc(ShenandoahHeapRegion::region_size_bytes());
+	// _comm_buff = (char*)malloc(ShenandoahHeapRegion::region_size_bytes());
+
+	_rdma_buff = NEW_C_HEAP_ARRAY(char, ShenandoahHeapRegion::region_size_bytes(), mtGC);
+	_comm_buff = NEW_C_HEAP_ARRAY(char, ShenandoahHeapRegion::region_size_bytes(), mtGC);
+	memset(_rdma_buff, 0, ShenandoahHeapRegion::region_size_bytes());
+	memset(_comm_buff, 0, ShenandoahHeapRegion::region_size_bytes());
 	establish_connections();
 }
+
 RemoteMem* RemoteMem::remote_mem() {
 	assert(_remote_mem != NULL, "Remote Mem is not established");
 	return _remote_mem;
+}
+
+ShenandoahHeap* RemoteMem::heap() {
+	assert(_heap != NULL, "Heap must be established");
+	return _heap;
 }
 
 int RemoteMem::establish_connections(){
@@ -555,7 +584,10 @@ int RemoteMem::establish_connections(){
 
     // rr_arr = (RemoteRegion**)malloc(sizeof(RemoteRegion*) * num_connections);
 	// rr_arr = new RemoteRegion* [num_connections];
-	server_arr = (RDMAServer**)malloc(sizeof(RDMAServer*) * num_connections);
+	// server_arr = (RDMAServer**)malloc(sizeof(RDMAServer*) * num_connections);
+	server_arr = NEW_C_HEAP_ARRAY(RDMAServer*, num_connections, mtGC);
+
+	memset(server_arr, 0, sizeof(RDMAServer*) * num_connections);
 
     for (size_t i= 0; i < num_connections; i++) {
 		tty->print_cr("i = %lu, num_conn = %lu", i, num_connections);
@@ -563,7 +595,7 @@ int RemoteMem::establish_connections(){
         server_arr[i] = new RDMAServer(i, this);
         // rr_arr[i] = new RemoteRegion(this);
     }
-	perform_some_tests();
+	// perform_some_tests();
 
     return ret;
 }
@@ -586,8 +618,71 @@ int RemoteMem::disconnect (DISCONNECT_CODE code) {
     return 0;
 }
 
+void RemoteMem::copy_to_temp_local_region(oop p, HeapWord* addr, size_t size){
+	ShenandoahHeapRegion* remote_r = _heap->heap_region_containing(addr);
+	assert(remote_r->is_remote(), "Must be a remote region");
+	// calculate offset to _bottom of remote region
+	// size_t offset_in_words = pointer_delta(remote_r->bottom(), addr);
+	// // calculate addr in temp_local
+	// ShenandoahHeapRegion* temp_local = remote_r->get_temp_forwarding();
+	// assert(temp_local != NULL, "temp local must have been allocated");
+
+	HeapWord* temp_local_addr = remote_r->get_temp_forwarding(addr);
+	Copy::aligned_disjoint_words((HeapWord*) p, temp_local_addr, size);
+}
+
+void RemoteMem::copy_to_rdma_buffer(oop p, HeapWord* addr, size_t size) {
+	// tty->print_cr("Copying to rdme buffer, org: %p", addr);
+	// calculate offset into the buffer from recorded coordinations
+	// ShenandoahHeapRegion* rr = _heap->heap_region_containing(addr);
+	// assert(rr->is_remote(), "Must be a remote region");
+	// size_t offset_from_evac_bottom = pointer_delta(rr->evac_bottom(), (HeapWord*)addr);
+	// size_t region_evac_offset_into_buffer = rr->rdma_buffer_offset_in_words();
+
+	// size_t object_offset = region_evac_offset_into_buffer + offset_from_evac_bottom;
+	HeapWord* to_addr = (HeapWord*)get_corresponding_evac_buffer_address(addr);
+	memcpy((void*) to_addr, (void*)p, size * HeapWordSize);
+	// tty->print_cr("Successfully copy to rdma buffer: obj1 %p, klass1 %p | obj2 %p, klass2 %p | remote %p", 
+	// 		(void*)p, (void*)p->klass_or_null_local(),
+	// 		(void*)to_addr, (void*)oop(to_addr)->klass_or_null_local(),
+	// 		(void*)addr);
+}
+
+void RemoteMem::flush_evac_buff() {
+	tty->print_cr("Flushing to remote mem with rdma");
+	// assert(false, "Hold it right there");
+	// ShenandoahCollectionSet* cset = _heap->collection_set();
+	// make a destination set which added regions at evec phase
+	// iterate through the destination set and move objects from buffer to its evac bottom
+	// be careful about sizing
+
+}
+
+void RemoteMem::fill_with_dummy_object(HeapWord* start, HeapWord* end, bool zap) {
+	// tty->print_cr("Filling tlabs with dummy objects");
+	assert(start, "Start must not be null");
+	assert(end, "End must not be null");
+	ShenandoahHeapRegion* rr = _heap->heap_region_containing(start);
+	// assert (rr == _heap->heap_region_containing(end-1), "tlab must not cross region bound");
+	assert (rr->is_remote(), "Must be operated on remote region");
+
+
+	// tty->print_cr("start %p", start);
+	// tty->print_cr("end %p", end);
+	// tty->print_cr("start %p r %lu", start, _heap->heap_region_index_containing(start));
+	// tty->print_cr("end %p r %lu", end, _heap->heap_region_index_containing(end));
+
+	HeapWord* buff_start	= (HeapWord*)get_corresponding_evac_buffer_address(start);
+	// HeapWord* buff_end		= (HeapWord*)get_corresponding_evac_buffer_address(end);
+
+	// _heap->fill_with_dummy_object(buff_start, buff_end, zap);
+	_heap->fill_with_dummy_object(buff_start, pointer_delta(end, start), zap);
+}
+
+
 void RemoteMem::zero_to_words(HeapWord* addr, size_t word_size) {
 	assert(_heap->is_in_remote(addr), "Address must be in remote");
+	tty->print_cr("RemoteMem::zero_to_words");
 	char buff[word_size*HeapWordSize];
 	memset(buff, 0, word_size*HeapWordSize);
 	write(addr, (HeapWord*)buff, word_size);
@@ -715,6 +810,87 @@ void RemoteMem::addr_to_pos(char* addr, size_t& server_idx, size_t& offset) {
 	assert(offset < size_per_server(), "must be a valid offset into the server");
 }
 
+void RemoteMem::record_new_tlab(size_t size_in_words) {
+	shenandoah_assert_heaplocked();
+	// if (_current_buffer_offset_in_words + size_in_words >= ShenandoahHeapRegion::region_size_words()) {
+	// 	_heap->make_parsable(true);
+	// 	tty->print_cr("verify buffer correctness");
+	// 	ResourceMark rm;
+	// 	oop obj = oop(_rdma_buff);
+	// 	while (obj < (HeapWord*)_rdma_buff+ShenandoahHeapRegion::region_size_words()){
+	// 		tty->print_cr("oop %p, klass %p", (void*)obj, (void*)obj->klass());
+	// 		obj = oop ((HeapWord*)obj + obj->size());
+	// 	}
+	// }
+	_current_buffer_offset_in_words = _current_buffer_offset_in_words + size_in_words;
+	tty->print_cr("Buffer offset: %lu", _current_buffer_offset_in_words);
+	// tty->print_cr("region size %lu", ShenandoahHeapRegion::region_size_words());
+	// bool validity = _current_buffer_offset_in_words < ShenandoahHeapRegion::region_size_words();
+	// tty->print_cr("Validity: %d", validity);
+	// assert(true, "true assertion should be catched");
+
+	assert(_current_buffer_offset_in_words < ShenandoahHeapRegion::region_size_words(), "Buffer overflow, need to do something at this point | buff_offset %lu, Region size %lu", _current_buffer_offset_in_words, ShenandoahHeapRegion::region_size_words());
+}
+
+void* RemoteMem::get_corresponding_evac_buffer_address(void* remote_addr) {
+	assert(remote_addr, "address must not be null");
+	assert(is_in(remote_addr), "Must be remote");
+	assert(_rdma_buff, "rdma buffer must have been init");
+	ShenandoahHeapRegion* rr = _heap->heap_region_containing(remote_addr);
+	assert(rr->is_remote(), "Must be a remote region");
+	assert(rr->evac_bottom(), "Evac bottom must be init");
+	assert(is_in_evac_set(rr), "Region must be in evac set");
+	size_t offset_from_evac_bottom = pointer_delta((HeapWord*)remote_addr, rr->evac_bottom());
+	assert(offset_from_evac_bottom < ShenandoahHeapRegion::region_size_words(), "sanity");
+
+	size_t region_evac_offset_into_buffer = rr->rdma_buffer_offset_in_words();
+
+	size_t object_offset = region_evac_offset_into_buffer + offset_from_evac_bottom;
+	return (HeapWord*)_rdma_buff + object_offset;
+}
+
+bool RemoteMem::is_in_evac_buff(void* addr) {
+	return addr >= (void*)_rdma_buff && addr < (void*)(_rdma_buff + ShenandoahHeapRegion::region_size_bytes());
+}
+
+void RemoteMem::check_consecutive_oop(void* remote_start, size_t words) {
+	tty->print_cr("check_consecutive_oop if tlab in region %lu: words %lu", _heap->heap_region_index_containing(remote_start), words);
+	HeapWord* buff_start = (HeapWord*)get_corresponding_evac_buffer_address(remote_start);
+	ResourceMark rm;
+	oop obj = oop(buff_start);
+	while (obj < buff_start + words){
+		tty->print_cr("oop %p, klass %p %s, size %d", (void*)obj, (void*)obj->klass(), obj->klass()->external_name(), obj->size());
+		obj = oop ((HeapWord*)obj + obj->size());
+	}
+	tty->print_cr("-------------------------------------------------");
+}
+
+void 	RemoteMem::add_region_to_evac_set (ShenandoahHeapRegion* r) {
+	assert(!is_in(r), "Already in collection set");
+	_evacuation_set[r->index()] = 1;
+}
+void	RemoteMem::remove_region_from_evac_set (ShenandoahHeapRegion* r) {
+	assert(is_in(r), "Not in collection set");
+	_evacuation_set[r->index()] = 0;
+}
+
+bool RemoteMem::is_in_evac_set(ShenandoahHeapRegion* r) {
+	return is_in_evac_set(r->index());
+}
+bool RemoteMem::is_in_evac_set(size_t region_idx) {
+	assert(region_idx < _heap->num_regions(), "Sanity");
+	assert(_evacuation_set, "evac set must be init");
+	return _evacuation_set[region_idx] == 1;
+}
+bool RemoteMem::is_in_evac_set(void* p) {
+	size_t r_idx = _heap->heap_region_index_containing(p);
+	return is_in_evac_set(r_idx);
+}
+
+void RemoteMem::clear_evac_set(){
+	memset(_evacuation_set, 0, _heap->num_regions());
+}
+
 void RemoteMem::write(char* to_addr, char* from_buffer, size_t byte_length) {
 	size_t server_idx = 0;
 	size_t offset = 0;
@@ -722,7 +898,7 @@ void RemoteMem::write(char* to_addr, char* from_buffer, size_t byte_length) {
 
 	addr_to_pos(to_addr, server_idx, offset);
 
-	tty->print_cr("Writing to server %lu, offset %lu", server_idx, offset);
+	// tty->print_cr("Writing to server %lu, offset %lu", server_idx, offset);
 
 	RDMAServer* server = server_arr[server_idx];
 	server->rdma_write(from_buffer, byte_length, offset);
@@ -750,7 +926,7 @@ void RemoteMem::read(char* from_addr, char* to_buffer, size_t byte_length) {
 
 	addr_to_pos(from_addr, server_idx, offset);
 
-	tty->print_cr("Reading to server %lu, offset %lu", server_idx, offset);
+	// tty->print_cr("Reading to server %lu, offset %lu", server_idx, offset);
 
 	RDMAServer* server = server_arr[server_idx];
 	server->rdma_read(to_buffer, byte_length, offset);

@@ -52,6 +52,7 @@ class ShenandoahHeap;
 class ShenandoahHeapRegion;
 class ShenandoahHeapRegionClosure;
 class ShenandoahCollectionSet;
+class ShenandoahHeapRegionSet;
 class ShenandoahFreeSet;
 class ShenandoahConcurrentMark;
 class ShenandoahMarkCompact;
@@ -387,6 +388,7 @@ public:
   void vmop_entry_final_mark();
   void vmop_entry_init_updaterefs();
   void vmop_entry_final_updaterefs();
+  void vmop_entry_stats_logging();
   void vmop_entry_full(GCCause::Cause cause);
   void vmop_degenerated(ShenandoahDegenPoint point);
 
@@ -396,6 +398,7 @@ public:
   void entry_final_mark();
   void entry_init_updaterefs();
   void entry_final_updaterefs();
+  void entry_stats_logging();
   void entry_full(GCCause::Cause cause);
   void entry_degenerated(int point);
 
@@ -416,6 +419,7 @@ private:
   void op_final_mark();
   void op_init_updaterefs();
   void op_final_updaterefs();
+  void op_stats_logging();
   void op_full(GCCause::Cause cause);
   void op_degenerated(ShenandoahDegenPoint point);
   void op_degenerated_fail();
@@ -685,7 +689,7 @@ public:
 
   // Evacuates object src. Returns the evacuated object, either evacuated
   // by this thread, or by some other thread.
-  inline oop evacuate_object(oop src, Thread* thread);
+  inline oop evacuate_object(oop src, Thread* thread, bool is_root=false);
 
   // Call before/after evacuation.
   void enter_evacuation();

@@ -110,6 +110,7 @@
   shtemplate(template, ShenandoahFinalMarkStartEvac) \
   shtemplate(template, ShenandoahInitUpdateRefs)  \
   shtemplate(template, ShenandoahFinalUpdateRefs) \
+  shtemplate(template, ShenandoahStatsLogging) \
   shtemplate(template, ShenandoahDegeneratedGC)   \
   template(Exit)                                  \
   template(LinuxDllLoad)                          \

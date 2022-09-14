@@ -76,7 +76,7 @@ inline WorkGang* ShenandoahHeap::get_safepoint_workers() {
 inline size_t ShenandoahHeap::heap_region_index_containing(const void* addr) const {
   uintptr_t region_start = ((uintptr_t) addr);
   uintptr_t index = (region_start - (uintptr_t) base()) >> ShenandoahHeapRegion::region_size_bytes_shift();
-  assert(index < num_regions(), "Region index is in bounds: " PTR_FORMAT, p2i(addr));
+  assert(index < num_regions(), "Region index is in bounds: " PTR_FORMAT ", index: %lu, num_regions: %lu", p2i(addr), index, num_regions());
   return index;
 }
 
@@ -254,15 +254,21 @@ inline HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size
     // No GCLABs in this thread, fallback to shared allocation
     return NULL;
   }
+  
+  
+  size_t remaining  = pointer_delta(gclab->hard_end(), gclab->top());
+  // tty->print_cr("allocating size %lu from gclab of remaining %lu", size, remaining);
+  
   HeapWord* obj = gclab->allocate(size);
   if (obj != NULL) {
+    // tty->print_cr("Allocate from existing gclab");
     return obj;
   }
   // Otherwise...
   return allocate_from_gclab_slow(thread, size, is_remote);
 }
 
-inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
+inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread, bool is_root) {
   if (ShenandoahThreadLocalData::is_oom_during_evac(Thread::current())) {
     // This thread went through the OOM during evac protocol and it is safe to return
     // the forward pointer. It must not attempt to evacuate any more.
@@ -270,12 +276,24 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   assert(ShenandoahThreadLocalData::is_evac_allowed(thread), "must be enclosed in oom-evac scope");
-
+  assert((void*)p, "p must not be null");
+  // tty->print_cr("Trying to evac oop %p, klass %p", (void*)p, (void*)p->klass_or_null_local());
   size_t size = p->size();
 
   assert(!heap_region_containing(p)->is_humongous(), "never evacuate humongous objects");
 
   bool alloc_from_gclab = true;
+
+  bool is_remote_alloc = false;
+  if (doEvacToRemote && !is_root) {
+    is_remote_alloc = true;
+  }
+
+  //debug 
+  if (is_remote_alloc) {
+    // assert(false, "debugging");
+  }
+
   HeapWord* copy = NULL;
 
 #ifdef ASSERT
@@ -285,10 +303,14 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   } else {
 #endif
     if (UseTLAB) {
-      copy = allocate_from_gclab(thread, size);
-      // tty->print_cr("gclab allocation finished, copy = %p ", copy);
+      copy = allocate_from_gclab(thread, size, is_remote_alloc /*is_remote*/);
+      // tty->print_cr("gclab allocation finished, copy = %p, region %lu ", copy, heap_region_index_containing(copy));
     }
     if (copy == NULL) {
+      if (doEvacToRemote) {
+        assert(false, "Remote mem does not handle shared evac");
+      }
+      tty->print_cr("Shared GC allocation");
       ShenandoahAllocRequest req = ShenandoahAllocRequest::for_shared_gc(size);
       copy = allocate_memory(req);
       alloc_from_gclab = false;
@@ -306,19 +328,42 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   // Copy the object:
-  if (is_in_local(copy)) {
-    Copy::aligned_disjoint_words((HeapWord*) p, copy, size);
+  // all remote copy is put a buffer, waiting to be rdma write
+  if (oopDesc::is_remote_oop(copy)) {
+    // for a remote copy, copy the orginal to the remote region's attached temp local region
+    // tty->print_cr("Copying to temp local");
+    // remote_mem()->copy_to_temp_local_region(p, copy, size);
+    // ---------------------------------------
+    // coordination between a remote region and the buffer must have been established
+    // remote_mem()->copy_to_temp_local_region(p, copy, size);
+    remote_mem()->copy_to_rdma_buffer(p, copy, size);
+    // remember to rdma write temp local at the end of gc cycle
+    // remember to forward any reference to remote temp to local temp
   } else {
-    remote_mem()->write(copy, (HeapWord*) p, size);
+    assert(is_in_local(copy), "Must be local");
+    Copy::aligned_disjoint_words((HeapWord*) p, copy, size);
   }
 
   // Try to install the new forwarding pointer.
   oop copy_val = oop(copy);
   oop result = ShenandoahForwarding::try_update_forwardee(p, copy_val);
+  // result is the latest version
+  // ResourceMark rm;
+  // tty->print_cr("Thread %s: Original %p - klass* %p - name %s | Copy %p - klass* %p - name %s | Result %p - klass* %p - name %s ", thread->name(), p, p->klass(), p->klass()->external_name(), copy_val, copy_val->klass(), copy_val->klass()->external_name(), result, result->klass(), result->klass()->external_name());
   if (result == copy_val) {
     // Successfully evacuated. Our copy is now the public one!
-    shenandoah_assert_correct(NULL, copy_val);
-    // tty->print_cr("Successfully evacuate the object");
+    // tty->print_cr("Success evac, Obj Klass comparison:%s-%p, %s-%p", p->klass()->external_name(), p->klass(), copy_val->klass()->external_name(), copy_val->klass());
+    // tty->print_cr("Success evac");
+
+    if (oopDesc::is_remote_oop(result)) {
+      // do something here to assert it is an actual object
+    } else {
+      // tty->print_cr("Local object, check klass");
+      assert(p->klass() == result->klass(), "Both copy must agree on klass");
+      shenandoah_assert_correct(NULL, result);
+    }
+    // tty->print_cr("Evac success copy root %p to %p klass %p", (void*)p, (void*)result, (void*)result->klass_or_null());
+    // tty->print_cr("Successfully evacuate the object %p to %p, %p, new location is remote: %d", (void*)p, (void*)copy_val, (void*)copy, oopDesc::is_remote_oop(copy));
     return copy_val;
   }  else {
     // Failed to evacuate. We need to deal with the object that is left behind. Since this
@@ -332,13 +377,23 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
     // do this. For non-GCLAB allocations, we have no way to retract the allocation, and
     // have to explicitly overwrite the copy with the filler object. With that overwrite,
     // we have to keep the fwdptr initialized and pointing to our (stale) copy.
+
+    // result is the official public copy, our copy must be retracted
     if (alloc_from_gclab) {
-      ShenandoahThreadLocalData::gclab(thread)->undo_allocation(copy, size);
+      ShenandoahThreadLocalData::gclab(thread, is_remote_alloc)->undo_allocation(copy, size);
     } else {
+      if (doEvacToRemote) {
+        assert(false, "Dat: non gclab allocation, need to properly handled");
+      }
       fill_with_object(copy, size);
       shenandoah_assert_correct(NULL, copy_val);
     }
-    shenandoah_assert_correct(NULL, result);
+    if (oopDesc::is_remote_oop(result)) {
+      // bypassing assertion for now 
+    } else {
+      shenandoah_assert_correct(NULL, result);
+    }
+    tty->print_cr("oop %p slow thread, returning latest version %p", (void*)p, (void*)result);
     return result;
   }
 }

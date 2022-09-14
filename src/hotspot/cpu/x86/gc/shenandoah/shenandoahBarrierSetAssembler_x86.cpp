@@ -1270,4 +1270,12 @@ void ShenandoahBarrierSetAssembler::barrier_stubs_init() {
     StubCodeGenerator cgen(&buf);
     _shenandoah_lrb = generate_shenandoah_lrb(&cgen);
   }
+
+  // rdma_load_barrier
+  int rlrb_stub_code_size = 4096;
+  ResourceMark rlrb_rm;
+  BufferBlob* rlrb_bb = BufferBlob::create("rdma_load_barrier_stubs", rlrb_stub_code_size);
+  CodeBuffer rlrb_buf(rlrb_bb);
+  StubCodeGenerator rlrb_cgen(&rlrb_buf);
+  _rdma_load_barrier = generate_rdma_load_barrier(&rlrb_cgen);
 }

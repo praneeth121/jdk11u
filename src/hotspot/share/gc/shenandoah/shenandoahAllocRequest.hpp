@@ -33,6 +33,7 @@ public:
     _alloc_shared_gc,   // Allocate common, outside of GCLAB
     _alloc_tlab,        // Allocate TLAB
     _alloc_gclab,       // Allocate GCLAB
+    _alloc_temp_region,
     _ALLOC_LIMIT
   };
 
@@ -46,6 +47,8 @@ public:
         return "TLAB";
       case _alloc_gclab:
         return "GCLAB";
+      case _alloc_temp_region:
+        return "Temp region for rdma";
       default:
         ShouldNotReachHere();
         return "";
@@ -57,13 +60,14 @@ private:
   size_t _requested_size;
   size_t _actual_size;
   Type _alloc_type;
+  bool _is_remote;
 #ifdef ASSERT
   bool _actual_size_set;
 #endif
 
-  ShenandoahAllocRequest(size_t _min_size, size_t _requested_size, Type _alloc_type) :
+  ShenandoahAllocRequest(size_t _min_size, size_t _requested_size, Type _alloc_type, bool _is_remote) :
           _min_size(_min_size), _requested_size(_requested_size),
-          _actual_size(0), _alloc_type(_alloc_type)
+          _actual_size(0), _alloc_type(_alloc_type), _is_remote(_is_remote)
 #ifdef ASSERT
           , _actual_size_set(false)
 #endif
@@ -71,19 +75,19 @@ private:
 
 public:
   static inline ShenandoahAllocRequest for_tlab(size_t min_size, size_t requested_size) {
-    return ShenandoahAllocRequest(min_size, requested_size, _alloc_tlab);
+    return ShenandoahAllocRequest(min_size, requested_size, _alloc_tlab, false);
   }
 
-  static inline ShenandoahAllocRequest for_gclab(size_t min_size, size_t requested_size) {
-    return ShenandoahAllocRequest(min_size, requested_size, _alloc_gclab);
+  static inline ShenandoahAllocRequest for_gclab(size_t min_size, size_t requested_size, bool is_remote=false) {
+    return ShenandoahAllocRequest(min_size, requested_size, _alloc_gclab, is_remote);
   }
 
   static inline ShenandoahAllocRequest for_shared_gc(size_t requested_size) {
-    return ShenandoahAllocRequest(0, requested_size, _alloc_shared_gc);
+    return ShenandoahAllocRequest(0, requested_size, _alloc_shared_gc, false);
   }
 
   static inline ShenandoahAllocRequest for_shared(size_t requested_size) {
-    return ShenandoahAllocRequest(0, requested_size, _alloc_shared);
+    return ShenandoahAllocRequest(0, requested_size, _alloc_shared, false);
   }
 
   inline size_t size() {
@@ -156,6 +160,10 @@ public:
         ShouldNotReachHere();
         return false;
     }
+  }
+
+  inline bool is_remote() {
+    return _is_remote;
   }
 };
 

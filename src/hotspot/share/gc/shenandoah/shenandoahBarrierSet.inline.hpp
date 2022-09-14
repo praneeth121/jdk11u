@@ -140,6 +140,24 @@ inline void ShenandoahBarrierSet::keep_alive_if_weak(oop value) {
 template <DecoratorSet decorators, typename BarrierSetT>
 template <typename T>
 inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_load_not_in_heap(T* addr) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(addr)) {
+  //     // we will handle this later
+  //     // while (true) {  }
+  //     if (r_mem->is_in_evac_set(addr)) {
+  //       // make sure you clear evac set right after flushing the rdma_buffer
+  //       tty->print_cr("oop_store_not_in_heap: in evac set");
+  //       addr = r_mem->get_corresponding_evac_buffer_address(addr);
+
+  //     } else {
+  //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //       assert(false, "Mutator handling");
+  //       // while (true) {}
+  //     }
+  //   }
+  // }
   oop value = Raw::oop_load_not_in_heap(addr);
   if (value != NULL) {
     ShenandoahBarrierSet *const bs = ShenandoahBarrierSet::barrier_set();
@@ -154,6 +172,24 @@ inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_loa
 template <DecoratorSet decorators, typename BarrierSetT>
 template <typename T>
 inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_load_in_heap(T* addr) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(addr)) {
+  //     // we will handle this later
+  //     // while (true) {}
+  //     if (r_mem->is_in_evac_set(addr)) {
+  //       // make sure you clear evac set right after flushing the rdma_buffer
+  //       tty->print_cr("oop_store_not_in_heap: in evac set");
+  //       addr = r_mem->get_corresponding_evac_buffer_address(addr);
+
+  //     } else {
+  //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //       assert(false, "Mutator handling");
+  //       // while (true) {}
+  //     }
+  //   }
+  // }
   oop value = Raw::oop_load_in_heap(addr);
   if (value != NULL) {
     ShenandoahBarrierSet *const bs = ShenandoahBarrierSet::barrier_set();
@@ -165,6 +201,24 @@ inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_loa
 
 template <DecoratorSet decorators, typename BarrierSetT>
 inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_load_in_heap_at(oop base, ptrdiff_t offset) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(base)) {
+  //     // we will handle this later
+  //     // while (true) {}
+  //     if (r_mem->is_in_evac_set(base)) {
+  //       // make sure you clear evac set right after flushing the rdma_buffer
+  //       tty->print_cr("oop_store_not_in_heap: in evac set");
+  //       return oop(r_mem->get_corresponding_evac_buffer_address(((char*)base) + offset));
+
+  //     } else {
+  //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //       assert(false, "Mutator handling");
+  //       // while (true) {}
+  //     }
+  //   }
+  // }
   oop value = Raw::oop_load_in_heap_at(base, offset);
   if (value != NULL) {
     ShenandoahBarrierSet *const bs = ShenandoahBarrierSet::barrier_set();
@@ -182,6 +236,23 @@ inline void ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_st
   ShenandoahBarrierSet* const bs = ShenandoahBarrierSet::barrier_set();
   bs->iu_barrier(value);
   bs->satb_barrier<decorators>(addr);
+
+//   if (doEvacToRemote) {
+//     RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+//     assert(r_mem, "remote mem must be init");
+//     if (r_mem->is_in(addr)) {
+//       // we will handle this later
+//       // while (true) {}
+//       if (r_mem->is_in_evac_set(addr)) {
+//         // make sure you clear evac set right after flushing the rdma_buffer
+//         tty->print_cr("oop_store_not_in_heap: in evac set");
+
+//       } else {
+//         tty->print_cr("oop_store_not_in_heap: not in evac set");
+//         // while (true) {}
+//       }
+//     }
+//   }
   Raw::oop_store(addr, value);
 }
 
@@ -209,6 +280,22 @@ inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_ato
   oop res;
   oop expected = compare_value;
   do {
+    // if (doEvacToRemote) {
+    //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+    //   assert(r_mem, "remote mem must be init");
+    //   if (r_mem->is_in(addr)) {
+    //     // we will handle this later
+    //     while (true) {}
+    //     if (r_mem->is_in_evac_set(addr)) {
+    //       // make sure you clear evac set right after flushing the rdma_buffer
+    //       tty->print_cr("oop_store_not_in_heap: in evac set");
+
+    //     } else {
+    //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+    //       while (true) {}
+    //     }
+    //   }
+    // }
     compare_value = expected;
     res = Raw::oop_atomic_cmpxchg(new_value, addr, compare_value);
     expected = res;
@@ -254,17 +341,65 @@ inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_ato
 template <DecoratorSet decorators, typename BarrierSetT>
 template <typename T>
 inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_atomic_xchg_in_heap(oop new_value, T* addr) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(addr)) {
+  //     // we will handle this later
+  //     while (true) {}
+  //     if (r_mem->is_in_evac_set(addr)) {
+  //       // make sure you clear evac set right after flushing the rdma_buffer
+  //       tty->print_cr("oop_store_not_in_heap: in evac set");
+
+  //     } else {
+  //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //       while (true) {}
+  //     }
+  //   }
+  // }
   return oop_atomic_xchg_in_heap_impl(new_value, addr);
 }
 
 template <DecoratorSet decorators, typename BarrierSetT>
 inline oop ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_atomic_xchg_in_heap_at(oop new_value, oop base, ptrdiff_t offset) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(AccessInternal::oop_field_addr<decorators>(base, offset))) {
+  //     // we will handle this later
+  //     while (true) {}
+  //     if (r_mem->is_in_evac_set(AccessInternal::oop_field_addr<decorators>(base, offset))) {
+  //       // make sure you clear evac set right after flushing the rdma_buffer
+  //       tty->print_cr("oop_store_not_in_heap: in evac set");
+
+  //     } else {
+  //       tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //       while (true) {}
+  //     }
+  //   }
+  // }
   return oop_atomic_xchg_in_heap_impl(new_value, AccessInternal::oop_field_addr<decorators>(base, offset));
 }
 
 // Clone barrier support
 template <DecoratorSet decorators, typename BarrierSetT>
 void ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::clone_in_heap(oop src, oop dst, size_t size) {
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(src) || r_mem->is_in(dst)) {
+  //     // we will handle this later
+  //     while (true) {}
+  //     // if (r_mem->is_in_evac_set(addr)) {
+  //     //   // make sure you clear evac set right after flushing the rdma_buffer
+  //     //   tty->print_cr("oop_store_not_in_heap: in evac set");
+
+  //     // } else {
+  //     //   tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //     //   while (true) {}
+  //     // }
+  //   }
+  // }
   if (ShenandoahCloneBarrier) {
     ShenandoahBarrierSet::barrier_set()->clone_barrier_runtime(src);
   }
@@ -277,6 +412,22 @@ bool ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_arraycopy
                                                                                          arrayOop dst_obj, size_t dst_offset_in_bytes, T* dst_raw,
                                                                                          size_t length) {
   ShenandoahBarrierSet* bs = ShenandoahBarrierSet::barrier_set();
+  // if (doEvacToRemote) {
+  //   RemoteMem* r_mem = ShenandoahHeap::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in(arrayOopDesc::obj_offset_to_raw(src_obj, src_offset_in_bytes, src_raw)) || r_mem->is_in(arrayOopDesc::obj_offset_to_raw(dst_obj, dst_offset_in_bytes, dst_raw))) {
+  //     // we will handle this later
+  //     while (true) {}
+  //     // if (r_mem->is_in_evac_set(addr)) {
+  //     //   // make sure you clear evac set right after flushing the rdma_buffer
+  //     //   tty->print_cr("oop_store_not_in_heap: in evac set");
+
+  //     // } else {
+  //     //   tty->print_cr("oop_store_not_in_heap: not in evac set");
+  //     //   while (true) {}
+  //     // }
+  //   }
+  // }
   bs->arraycopy_barrier(arrayOopDesc::obj_offset_to_raw(src_obj, src_offset_in_bytes, src_raw),
                         arrayOopDesc::obj_offset_to_raw(dst_obj, dst_offset_in_bytes, dst_raw),
                         length);

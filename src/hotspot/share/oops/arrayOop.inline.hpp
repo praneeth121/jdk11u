@@ -37,4 +37,22 @@ void* arrayOopDesc::base_raw(BasicType type) const {
   return reinterpret_cast<void*>(cast_from_oop<intptr_t>(as_oop()) + base_offset_in_bytes(type));
 }
 
+void arrayOopDesc::set_length(HeapWord* mem, int length) {
+  if (is_remote_oop(mem)) {
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      oop buffering_oop = oop(buffering_addr);
+      tty->print_cr("array set_length: Remote obj %p, buffering at %p, klass %p", (void*)mem, buffering_addr, buffering_oop->klass_or_null_local());
+      arrayOopDesc::set_length((HeapWord*)buffering_addr, length);
+      return;
+    }
+    assert(false, "We are not here yet");
+    r_mem->write((char*)mem + length_offset_in_bytes(), (char*)&length, sizeof(int));
+    return;
+  }
+  *(int*)(((char*)mem) + length_offset_in_bytes()) = length;
+}
+
 #endif // SHARE_OOPS_ARRAYOOP_INLINE_HPP

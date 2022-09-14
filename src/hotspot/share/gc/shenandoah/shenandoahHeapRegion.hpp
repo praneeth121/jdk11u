@@ -119,6 +119,7 @@ private:
     _pinned,                  // region is pinned
     _pinned_cset,             // region is pinned and in cset (evac failure path)
     _trash,                   // region contains only trash
+    _temp,                    // Temporary region for rdma evac, either temp local or temp remote referencing each other
     _REGION_STATES_NUM        // last
   };
 
@@ -134,6 +135,7 @@ private:
       case _pinned:                  return "Pinned";
       case _pinned_cset:             return "Collection Set, Pinned";
       case _trash:                   return "Trash";
+      case _temp:                    return "Temp";
       default:
         ShouldNotReachHere();
         return "";
@@ -153,6 +155,7 @@ private:
       case _trash:                  return 7;
       case _pinned_cset:            return 8;
       case _pinned_humongous_start: return 9;
+      case _temp:                   return 10;
       default:
         ShouldNotReachHere();
         return -1;
@@ -181,6 +184,8 @@ public:
   void make_empty();
   void make_uncommitted();
   void make_committed_bypass();
+  void make_temp_local();
+  void make_temp_remote();
 
   // Individual states:
   bool is_empty_uncommitted()      const { return _state == _empty_uncommitted; }
@@ -201,6 +206,11 @@ public:
   bool is_remote()                 const { return _is_remote; }
   bool is_local()                  const { return !_is_remote; }
 
+  bool is_temp()                   const { return _state == _temp; }
+
+  bool is_temp_local()             const { return is_temp() && is_local(); }
+  bool is_temp_remote()            const { return is_temp() && is_remote(); }
+
   // Macro-properties:
   bool is_alloc_allowed()          const { return is_empty() || is_regular() || _state == _pinned; }
   bool is_stw_move_allowed()       const { return is_regular() || _state == _cset || (ShenandoahHumongousMoves && _state == _humongous_start); }
@@ -211,6 +221,8 @@ public:
   void record_pin();
   void record_unpin();
   size_t pin_count() const;
+
+  bool is_in(HeapWord* v) { return v >= bottom() && v < end(); }
 
 private:
   static size_t RegionCount;
@@ -248,6 +260,13 @@ private:
   volatile size_t _critical_pins;
 
   HeapWord* volatile _update_watermark;
+
+  // pointer to a temporary region, remote one point to local one and vice versa, must be null if this is not a temp region
+  ShenandoahHeapRegion* _temp_forwarding;
+
+  // mark where the first tlab is allocated for evacuation, always NULL for local region
+  HeapWord* _evac_bottom;
+  size_t _rdma_buffer_offset_in_words;
 
 public:
   ShenandoahHeapRegion(HeapWord* start, size_t index, bool committed, bool is_remote = false);
@@ -377,6 +396,20 @@ public:
   HeapWord* bottom() const      { return _bottom;  }
   HeapWord* end() const         { return _end;     }
 
+  HeapWord* evac_bottom() const           { return _evac_bottom; }
+  void set_evac_bottom(HeapWord* v)  { _evac_bottom = v; }
+
+  size_t rdma_buffer_offset_in_words() const      {
+    assert(_rdma_buffer_offset_in_words != region_size_words(), "Must not be at invalid value to do this, aka must have been set");
+    return _rdma_buffer_offset_in_words;
+  }
+  
+  void set_rdma_buffer_offset_in_words(size_t v)  {
+    assert(_rdma_buffer_offset_in_words == region_size_words(), "Must be at invalid value to do this, aka have not been set before");
+    assert(v < region_size_words(), "Must be region-bound");
+    _rdma_buffer_offset_in_words = v;
+  }
+
   size_t capacity() const       { return byte_size(bottom(), end()); }
   size_t used() const           { return byte_size(bottom(), top()); }
   size_t free() const           { return byte_size(top(),    end()); }
@@ -390,6 +423,28 @@ public:
   inline HeapWord* get_update_watermark() const;
   inline void set_update_watermark(HeapWord* w);
   inline void set_update_watermark_at_safepoint(HeapWord* w);
+
+  ShenandoahHeapRegion* get_temp_forwarding() const { return _temp_forwarding; }
+  void set_temp_forwarding(ShenandoahHeapRegion* r) {
+#ifdef ASSERT
+    if (is_remote()) {
+      assert(r->is_local(), "Must be the opposite");
+    } else {
+      assert(r->is_remote(), "Must be the opposite");
+    }
+#endif
+    _temp_forwarding = r;
+  }
+
+  HeapWord* get_temp_forwarding(HeapWord* p) {
+    assert(is_temp(), "Must be in temp state");
+    assert(_temp_forwarding != NULL, "Must be forwarded");
+
+    size_t offset_in_words = pointer_delta(bottom(), p);
+    assert(offset_in_words < region_size_words(), "pointer must be contained in the region");
+
+    return _temp_forwarding->bottom() + offset_in_words;
+  }
 
 private:
   void do_commit();

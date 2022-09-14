@@ -131,7 +131,7 @@ class oopDesc {
 
   // Sometimes (for complicated concurrency-related reasons), it is useful
   // to be able to figure out the size of an object knowing its klass.
-  inline int size_given_klass(Klass* klass, void* remote_oop=NULL);
+  inline int size_given_klass(Klass* klass);
 
   // type test operations (inlined in oop.inline.hpp)
   inline bool is_instance()            const;

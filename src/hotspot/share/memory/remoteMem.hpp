@@ -9,7 +9,7 @@
 #include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
 
-// #include "gc/shenandoah/shenandoahHeap.hpp"
+// #include "gc/shenandoah/shenandoahHeapRegionSet.hpp"
 // #include "memory/virtualspace.hpp"
 
 #define BUFFER_SIZE 16
@@ -30,11 +30,15 @@
 #define SERVER_ID_MASK ((1 << SERVER_ID_BITS) - 1) << SERVER_ID_SHIFT
 #define MR_ID_MASK ((1 << MR_ID_BITS) - 1) << MR_ID_SHIFT
 
+#define INIT_MAX_THREADS 16
+
 
 class RemoteMem;
 class RDMAServer;
 // class RemoteRegion;
 class ShenandoahHeap;
+// class ShenandoahHeapRegionSet;
+class ShenandoahHeapRegion;
 
 enum DISCONNECT_CODE {
     out_destroy_listen_ep,
@@ -341,17 +345,16 @@ public:
 
 class RDMAServer : public CHeapObj<mtGC> {
 private:
-	RemoteMem* connection;
+	RemoteMem* _remote_mem;
 	MemoryRegion* mr;
 	// RemoteRegion* rr_arr[100]; //allocate 100 regions each server
 	int next_empty_idx;
 	int send_flags;
 	struct ibv_wc wc;
 
-    char send_msg[BUFFER_SIZE];
-    char recv_msg[BUFFER_SIZE];
-	char rdma_buff[RW_BUFFER_SIZE];
-    struct ibv_mr *recv_mr, *send_mr, *rdma_mr;
+    char* send_msg;
+    char* recv_msg;
+    struct ibv_mr *recv_mr, *send_mr, *rdma_mr, *comm_mr, *thread_local_mr;
 
 
 	// struct ibv_mr * mr []
@@ -368,14 +371,16 @@ private:
 
 
 public:
-	RDMAServer(int idx, RemoteMem* connection);
+	RDMAServer(int idx, RemoteMem* remote_mem);
 	size_t mr_size();
 	int send_comm_code(COMM_CODE code, size_t optional_val=0);
 	MemoryRegion* reg_new_mr(size_t byte_size);
 	int register_comm_mr();
 	int register_rdma_mr();
-	
 
+	char* rdma_buff();
+	char* comm_buff();
+	
 	int rdma_write(char* buffer, size_t length, size_t offset);
 	int rdma_read(char* buffer, size_t length, size_t addr_offset);
 
@@ -415,6 +420,9 @@ private:
 	ReservedSpace _rs;
     struct rdma_cm_id* _listen_id;
 
+	char* _comm_buff;
+	char* _rdma_buff;
+
     // RemoteRegion** rr_arr;
 	RDMAServer** server_arr;
 
@@ -424,16 +432,28 @@ private:
     int current_rr_idx;
     uint32_t current_offset;
 
+	size_t _current_buffer_offset_in_words;
+	// ShenandoahHeapRegionSet* _evacuation_set;
+	jbyte* const          _evacuation_set;
+
 public:
 
     RemoteMem(ShenandoahHeap* heap, size_t num_connections, ReservedSpace rs);
 
 	static RemoteMem* remote_mem();
+	static ShenandoahHeap* heap();
     int establish_connections	();
     int disconnect				(DISCONNECT_CODE code);
 	// TODO: see if this should be deleted
     bool expand_remote_region(int rm_idx, int expansion_size);
 
+	void copy_to_temp_local_region(oop p, HeapWord* addr, size_t size);
+	void copy_to_rdma_buffer(oop p, HeapWord* addr, size_t size);
+
+	void flush_evac_buff();
+	
+	// wrapper of the actual fill_with_dummy_object but forwarded to the evac buffer
+	void fill_with_dummy_object(HeapWord* start, HeapWord* end, bool zap);
 
 	// functions that mimic local mem read and write api
 	void zero_to_words(HeapWord* addr, size_t word_size);
@@ -442,16 +462,46 @@ public:
 
 
 	// getters
-	char*					base()				const	{ return _rs.base(); }
-	char*					end()				const	{ return _rs.end(); }
-	size_t					size()				const	{ return _rs.size(); }
-	size_t					size_per_server()	const	{ return _rs.size() / num_connections; }
-    struct rdma_cm_id ** 	listen_id()			{ return &_listen_id; }
-	size_t 				 	mr_size()			{ return size_per_server(); }
+	char*						base()				const	{ return _rs.base(); }
+	char*						end()				const	{ return _rs.end(); }
+	size_t						size()				const	{ return _rs.size(); }
+	size_t						size_per_server()	const	{ return _rs.size() / num_connections; }
+    struct rdma_cm_id ** 		listen_id()			{ return &_listen_id; }
+	size_t 				 		mr_size()			{ return size_per_server(); }
+
+	char* 						rdma_buff()							{ return _rdma_buff; }
+	char* 						comm_buff()							{ return _comm_buff; }
+	size_t 						current_buffer_offset_in_words() 	{ return _current_buffer_offset_in_words; }
 
 	// util funcs
 	void 	addr_to_pos	(char* addr, size_t& server_idx, size_t& offset);
 	char* 	pos_to_addr	(size_t serer_idx, size_t offset);
+	void 	record_new_tlab(size_t size_in_words);
+	void*	get_corresponding_evac_buffer_address(void* remote_addr);
+	bool	is_in_evac_buff(void* addr);
+	void	check_consecutive_oop(void* remote_start, size_t words);
+	
+	// evac set utils
+	void 	add_region_to_evac_set		(ShenandoahHeapRegion* r);
+	void	remove_region_from_evac_set	(ShenandoahHeapRegion* r);
+	bool is_in_evac_set(ShenandoahHeapRegion* r);
+	bool is_in_evac_set(size_t region_idx);
+	bool is_in_evac_set(void* p);
+	void clear_evac_set();
+
+	// static HeapWord* resolve_temp_remote_forwarded(HeapWord* p) {
+	// 	// resolving a remote pointer that is forwarded to a local pointer
+	// 	ShenandoahHeapRegion* remote_r = heap()->heap_region_containing(p);
+	// 	assert(remote_r->is_remote(), "Region must be remote");
+	// 	if (remote_r->is_local() || !remote_r->is_temp()) return p;
+	// 	// p is remote and forwarded to local
+	// 	return remote_r->get_temp_forwarding(p);
+	// }
+
+	// static bool is_temp_forwarded(HeapWord* p) {
+	// 	ShenandoahHeapRegion* r = heap()->heap_region_containing(p);
+	// 	return r->is_temp() && r->get_temp_forwarding() != NULL;
+	// }
 
 	// write
 	void	write			(char* to_addr, char* from_buffer, size_t byte_length);
@@ -471,6 +521,7 @@ public:
 	uint64_t remote_cas		(char* to_addr, uint64_t expected, uint64_t desired);
 
 	bool is_in(const void* p) const {
+		assert(p != NULL, "p must not be NULL");
 		return p >= (void*)base() && p < (void*)end();
 	}
 

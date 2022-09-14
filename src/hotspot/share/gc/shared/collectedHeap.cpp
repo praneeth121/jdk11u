@@ -368,6 +368,7 @@ void CollectedHeap::fill_args_check(HeapWord* start, size_t words)
 {
   assert(words >= min_fill_size(), "too small to fill");
   assert(is_object_aligned(words), "unaligned size");
+  if (_remote_mem && _remote_mem->is_in_evac_buff(start)) return;
   assert(Universe::heap()->is_in_reserved(start), "not in heap");
   assert(Universe::heap()->is_in_reserved(start + words - 1), "not in heap");
 }
@@ -439,6 +440,10 @@ void CollectedHeap::fill_with_objects(HeapWord* start, size_t words, bool zap)
 
 void CollectedHeap::fill_with_dummy_object(HeapWord* start, HeapWord* end, bool zap) {
   CollectedHeap::fill_with_object(start, end, zap);
+}
+
+void CollectedHeap::fill_with_dummy_object(HeapWord* start, size_t words, bool zap) {
+  CollectedHeap::fill_with_object(start, words, zap);
 }
 
 HeapWord* CollectedHeap::allocate_new_tlab(size_t min_size,

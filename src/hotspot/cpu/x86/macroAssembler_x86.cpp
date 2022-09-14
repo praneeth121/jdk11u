@@ -5455,6 +5455,8 @@ void MacroAssembler::access_load_at(BasicType type, DecoratorSet decorators, Reg
                                     Register tmp1, Register thread_tmp) {
   BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
   decorators = AccessInternal::decorator_fixup(decorators);
+
+  // raw or not, call vm to increase_access_counter
   bool as_raw = (decorators & AS_RAW) != 0;
   if (as_raw) {
     bs->BarrierSetAssembler::load_at(this, decorators, type, dst, src, tmp1, thread_tmp);

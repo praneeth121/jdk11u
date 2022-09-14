@@ -89,6 +89,7 @@ class StubRoutines: AllStatic {
 
   static jint    _verify_oop_count;
   static address _verify_oop_subroutine_entry;
+  static address _verify_remote_oop_subroutine_entry;
 
   static address _call_stub_return_address;                // the return PC, when returning to a call stub
   static address _call_stub_entry;
@@ -246,12 +247,13 @@ class StubRoutines: AllStatic {
   static RuntimeBlob* code2() { return _code2; }
 
   // Debugging
-  static jint    verify_oop_count()                        { return _verify_oop_count; }
-  static jint*   verify_oop_count_addr()                   { return &_verify_oop_count; }
+  static jint    verify_oop_count()                             { return _verify_oop_count; }
+  static jint*   verify_oop_count_addr()                        { return &_verify_oop_count; }
   // a subroutine for debugging the GC
-  static address verify_oop_subroutine_entry_address()     { return (address)&_verify_oop_subroutine_entry; }
+  static address verify_oop_subroutine_entry_address()          { return (address)&_verify_oop_subroutine_entry; }
+  static address verify_remote_oop_subroutine_entry_address()   { return (address)&_verify_remote_oop_subroutine_entry; }
 
-  static address catch_exception_entry()                   { return _catch_exception_entry; }
+  static address catch_exception_entry()                        { return _catch_exception_entry; }
 
   // Calls to Java
   typedef void (*CallStub)(

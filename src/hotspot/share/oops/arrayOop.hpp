@@ -111,9 +111,8 @@ class arrayOopDesc : public oopDesc {
   void set_length(int length) {
     set_length((HeapWord*)this, length);
   }
-  static void set_length(HeapWord* mem, int length) {
-    *(int*)(((char*)mem) + length_offset_in_bytes()) = length;
-  }
+  
+  static inline void set_length(HeapWord* mem, int length);
 
   // Should only be called with constants as argument
   // (will not constant fold otherwise)

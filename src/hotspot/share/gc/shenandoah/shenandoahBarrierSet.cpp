@@ -144,10 +144,18 @@ void ShenandoahBarrierSet::on_thread_attach(JavaThread* thread) {
 
 void ShenandoahBarrierSet::on_thread_detach(JavaThread* thread) {
   ShenandoahThreadLocalData::satb_mark_queue(thread).flush();
-  PLAB* gclab = ShenandoahThreadLocalData::gclab(thread);
+  PLAB* gclab = NULL;
+  gclab = ShenandoahThreadLocalData::gclab(thread, false);
   if (gclab != NULL) {
     gclab->retire();
   }
+
+  gclab = NULL;
+  gclab = ShenandoahThreadLocalData::gclab(thread, true);
+  if (gclab != NULL) {
+    gclab->retire();
+  }
+
 }
 
 void ShenandoahBarrierSet::clone_barrier_runtime(oop src) {

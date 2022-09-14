@@ -166,7 +166,7 @@ void ShenandoahControlThread::run_service() {
         mode = default_mode;
         cause = default_cause;
       } else {
-        tty->print_cr("Not starting gc");
+        // tty->print_cr("Not starting gc");
       }
 
       // Ask policy if this cycle wants to process references or unload classes
@@ -409,14 +409,19 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   // Complete marking under STW, and start evacuation
   tty->print_cr("Final mark ---------------------------------------------");
   heap->vmop_entry_final_mark();
+  tty->print_cr("Final mark ends ---------------------------------------------");
 
   // Final mark might have reclaimed some immediate garbage, kick cleanup to reclaim
   // the space. This would be the last action if there is nothing to evacuate.
+  tty->print_cr("Early clean up ---------------------------------------------");
   heap->entry_cleanup_early();
+  tty->print_cr("Early clean up ends ---------------------------------------------");
 
   {
+    tty->print_cr("Logging freeset status ---------------------------------------------");
     ShenandoahHeapLocker locker(heap->lock());
     heap->free_set()->log_status();
+    tty->print_cr("Logging freeset status ends ---------------------------------------------");
   }
 
   // Continue the cycle with evacuation and optional update-refs.
@@ -438,6 +443,7 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
     // Update references freed up collection set, kick the cleanup to reclaim the space.
     heap->entry_cleanup_complete();
   }
+  heap->vmop_entry_stats_logging();
   tty->print_cr("Collection cycle ends ---------------------------------------------");
 
   // Cycle is complete

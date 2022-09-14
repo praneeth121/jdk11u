@@ -100,7 +100,7 @@ void ShenandoahAdaptiveHeuristics::record_cycle_start() {
 }
 
 bool ShenandoahAdaptiveHeuristics::should_start_gc() const {
-  tty->print_cr("Adaptive shouldstartGC");
+  // tty->print_cr("Adaptive shouldstartGC");
   ShenandoahHeap* heap = ShenandoahHeap::heap();
   size_t max_capacity = heap->max_capacity();
   size_t capacity = heap->soft_max_capacity();

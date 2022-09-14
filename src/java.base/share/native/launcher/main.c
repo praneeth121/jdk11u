@@ -96,6 +96,7 @@ WinMain(HINSTANCE inst, HINSTANCE previnst, LPSTR cmdline, int cmdshow)
 JNIEXPORT int
 main(int argc, char **argv)
 {
+    printf("main func");
     int margc;
     char** margv;
     int jargc;

@@ -1134,6 +1134,18 @@ class StubGenerator: public StubCodeGenerator {
     return start;
   }
 
+  address generate_verify_remote_oop() {
+    StubCodeMark mark(this, "StubRoutines", "verify_remote_oop");
+    address start = __ pc();
+
+    Label exit, error;
+
+
+    __ bind(exit);
+
+    return start;
+  }
+
   //
   // Verify that a register contains clean 32-bits positive value
   // (high 32-bits are 0) so it could be used in 64-bits shifts.
@@ -6001,6 +6013,7 @@ address generate_avx_ghash_processBlocks() {
 
     // support for verify_oop (must happen after universe_init)
     StubRoutines::_verify_oop_subroutine_entry = generate_verify_oop();
+    StubRoutines::_verify_remote_oop_subroutine_entry = generate_verify_remote_oop();
 
     // arraycopy stubs used by compilers
     generate_arraycopy_stubs();

@@ -96,43 +96,146 @@ HeapWord* ShenandoahFreeSet::allocate_single(ShenandoahAllocRequest& req, bool& 
     case ShenandoahAllocRequest::_alloc_shared_gc: {
       // tty->print_cr("GC allocation in region ...");
       // size_t is unsigned, need to dodge underflow when _leftmost = 0
+      
 
-      // Fast-path: try to allocate in the collector view first
-      for (size_t c = _collector_rightmost + 1; c > _collector_leftmost; c--) {
-        size_t idx = c - 1;
-        if (is_collector_free(idx)) {
-          HeapWord* result = try_allocate_in(_heap->get_region(idx), req, in_new_region);
-          if (result != NULL) {
-            return result;
+      // Dat mod 
+      if (doEvacToRemote) {
+        if (req.is_remote()) {
+          tty->print_cr("Remote allocation");
+          // cannot borrow from mutator regions
+          tty->print_cr("Collector rightmost %lu | local_max %lu", _collector_rightmost, _local_max);
+          assert(_collector_rightmost >= _local_max, "have to handle if this fails");
+          size_t left_most = MAX2(_collector_leftmost, _local_max);
+          assert(left_most <= _collector_rightmost, "sanity");
+          for (size_t c = _collector_rightmost + 1; c > left_most; c--) {
+            size_t idx = c - 1;
+            if (is_collector_free(idx)) {
+              HeapWord* result = try_allocate_in(_heap->get_region(idx), req, in_new_region);
+              if (result != NULL) {
+                assert(ShenandoahHeap::heap()->heap_region_containing(result)->is_remote(), "Sanity");
+                return result;
+              }
+            }
           }
+          assert(false, "need handling");
+        } else {
+          tty->print_cr("Local allocation");
+          // local gc allocation, may borrow from mutator
+          assert(_collector_leftmost < _local_max, "have to handle if this fails");
+          size_t right_most = MIN2(_collector_rightmost, _local_max-1);
+
+          for (size_t c = right_most + 1; c > _collector_leftmost; c--) {
+            size_t idx = c - 1;
+            if (is_collector_free(idx)) {
+              HeapWord* result = try_allocate_in(_heap->get_region(idx), req, in_new_region);
+              if (result != NULL) {
+                return result;
+              }
+            }
+          }
+
+          // No dice. Can we borrow space from mutator view?
+          if (!ShenandoahEvacReserveOverflow) {
+            return NULL;
+          }
+
+          // Try to steal the empty region from the mutator view
+          for (size_t c = _mutator_rightmost + 1; c > _mutator_leftmost; c--) {
+            size_t idx = c - 1;
+            if (is_mutator_free(idx)) {
+              ShenandoahHeapRegion* r = _heap->get_region(idx);
+              if (is_empty_or_trash(r)) {
+                flip_to_gc(r);
+                HeapWord *result = try_allocate_in(r, req, in_new_region);
+                if (result != NULL) {
+                  return result;
+                }
+              }
+            }
+          }
+
         }
-      }
 
-      // No dice. Can we borrow space from mutator view?
-      if (!ShenandoahEvacReserveOverflow) {
-        return NULL;
-      }
-
-      // Try to steal the empty region from the mutator view
-      for (size_t c = _mutator_rightmost + 1; c > _mutator_leftmost; c--) {
-        size_t idx = c - 1;
-        if (is_mutator_free(idx)) {
-          ShenandoahHeapRegion* r = _heap->get_region(idx);
-          if (is_empty_or_trash(r)) {
-            flip_to_gc(r);
-            HeapWord *result = try_allocate_in(r, req, in_new_region);
+      } else {
+        // Fast-path: try to allocate in the collector view first
+        for (size_t c = _collector_rightmost + 1; c > _collector_leftmost; c--) {
+          size_t idx = c - 1;
+          if (is_collector_free(idx)) {
+            HeapWord* result = try_allocate_in(_heap->get_region(idx), req, in_new_region);
             if (result != NULL) {
               return result;
             }
           }
         }
+
+        // No dice. Can we borrow space from mutator view?
+        if (!ShenandoahEvacReserveOverflow) {
+          return NULL;
+        }
+
+        // Try to steal the empty region from the mutator view
+        for (size_t c = _mutator_rightmost + 1; c > _mutator_leftmost; c--) {
+          size_t idx = c - 1;
+          if (is_mutator_free(idx)) {
+            ShenandoahHeapRegion* r = _heap->get_region(idx);
+            if (is_empty_or_trash(r)) {
+              flip_to_gc(r);
+              HeapWord *result = try_allocate_in(r, req, in_new_region);
+              if (result != NULL) {
+                return result;
+              }
+            }
+          }
+        }
+
+        // No dice. Do not try to mix mutator and GC allocations, because
+        // URWM moves due to GC allocations would expose unparsable mutator
+        // allocations.
+
+        break;
       }
+      
+      // // Fast-path: try to allocate in the collector view first
+      // for (size_t c = _collector_rightmost + 1; c > _collector_leftmost; c--) {
+      //   size_t idx = c - 1;
+      //   if (is_collector_free(idx)) {
+      //     tty->print_cr("Region %lu is collector free", idx);
+      //     HeapWord* result = try_allocate_in(_heap->get_region(idx), req, in_new_region);
+      //     if (result != NULL) {
+      //       tty->print_cr("Success gclab alloc at region %lu", idx);
+      //       return result;
+      //     }
+      //   }
+      // }
 
-      // No dice. Do not try to mix mutator and GC allocations, because
-      // URWM moves due to GC allocations would expose unparsable mutator
-      // allocations.
+      // // No dice. Can we borrow space from mutator view?
+      // if (!ShenandoahEvacReserveOverflow) {
+      //   return NULL;
+      // }
 
-      break;
+      // // Try to steal the empty region from the mutator view
+      // tty->print_cr("Stealing regions from mutator");
+      // for (size_t c = _mutator_rightmost + 1; c > _mutator_leftmost; c--) {
+      //   size_t idx = c - 1;
+      //   if (is_mutator_free(idx)) {
+      //     tty->print_cr("Region %lu is mutator free", idx);
+      //     ShenandoahHeapRegion* r = _heap->get_region(idx);
+      //     if (is_empty_or_trash(r)) {
+      //       flip_to_gc(r);
+      //       HeapWord *result = try_allocate_in(r, req, in_new_region);
+      //       if (result != NULL) {
+      //         tty->print_cr("Success gclab alloc at region %lu", idx);
+      //         return result;
+      //       }
+      //     }
+      //   }
+      // }
+
+      // // No dice. Do not try to mix mutator and GC allocations, because
+      // // URWM moves due to GC allocations would expose unparsable mutator
+      // // allocations.
+
+      // break;
     }
     default:
       ShouldNotReachHere();
@@ -336,6 +439,45 @@ HeapWord* ShenandoahFreeSet::allocate_contiguous(ShenandoahAllocRequest& req) {
 
   req.set_actual_size(words_size);
   return _heap->get_region(beg)->bottom();
+}
+
+ShenandoahHeapRegion* ShenandoahFreeSet::allocate_temp_local_region() {
+  // allocate a a temporal region to buffer for rdma evac
+  // we dont care if it is a gc or mutator region, as long as it is empty and local
+  // use collector regions first
+  for (size_t c = _local_max - 1  + 1; c > _collector_leftmost; c--) {
+    size_t idx = c - 1;
+    if (is_collector_free(idx)) {
+      tty->print_cr("Local region index: %lu", idx);
+      ShenandoahHeapRegion* r = _heap->get_region(idx);
+      if (is_empty_or_trash(r)){
+        try_recycle_trashed(r);
+        r->make_temp_local();
+        _collector_free_bitmap.clear_bit(r->index());
+        return r;
+      }
+    }
+  }
+
+  // no use, try mutator regions, but flip it to collector region first
+
+  for (size_t c = _mutator_rightmost + 1; c > _mutator_leftmost; c--) {
+    size_t idx = c - 1;
+    if (is_mutator_free(idx)) {
+      ShenandoahHeapRegion* r = _heap->get_region(idx);
+      if (is_empty_or_trash(r)) {
+        flip_to_gc(r);
+        try_recycle_trashed(r);
+        r->make_temp_local();
+        _collector_free_bitmap.clear_bit(r->index());
+        return r;
+      }
+    }
+  }
+
+  tty->print_cr("Temp local region allocation failed, what should I do?????");
+  return NULL;
+
 }
 
 bool ShenandoahFreeSet::is_empty_or_trash(ShenandoahHeapRegion *r) {

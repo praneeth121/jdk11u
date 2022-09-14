@@ -116,6 +116,8 @@ class outputStream;
   f(degen_gc,                                       "Pause Degenerated GC (N)")        \
   f(degen_gc_update_roots,                          "  Degen Update Roots")            \
   SHENANDOAH_PAR_PHASE_DO(degen_gc_update_,         "    DU: ", f)                     \
+  f(stats_logging_gross,                            "Pause Stats Logging (G)")         \
+  f(stats_logging,                                  "Pause Stats Logging (N")          \
                                                                                        \
   f(full_gc_gross,                                  "Pause Full GC (G)")               \
   f(full_gc,                                        "Pause Full GC (N)")               \

@@ -182,7 +182,7 @@ void ShenandoahHeuristics::record_cycle_end() {
 }
 
 bool ShenandoahHeuristics::should_start_gc() const {
-  tty->print_cr("default shouldstartGC");
+  // tty->print_cr("default shouldstartGC");
   // Perform GC to cleanup metaspace
   if (has_metaspace_oom()) {
     // Some of vmTestbase/metaspace tests depend on following line to count GC cycles

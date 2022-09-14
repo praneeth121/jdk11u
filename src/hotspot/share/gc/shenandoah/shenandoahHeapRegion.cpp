@@ -59,11 +59,14 @@ ShenandoahHeapRegion::ShenandoahHeapRegion(HeapWord* start, size_t index, bool c
   _state(committed ? _empty_committed : _empty_uncommitted),
   _is_remote(is_remote),
   _top(start),
+  _evac_bottom(NULL),
+  _rdma_buffer_offset_in_words(region_size_words()),   // invalid value
   _tlab_allocs(0),
   _gclab_allocs(0),
   _live_data(0),
   _critical_pins(0),
-  _update_watermark(start) {
+  _update_watermark(start),
+  _temp_forwarding(NULL) {
 
   assert(Universe::on_page_boundary(_bottom) && Universe::on_page_boundary(_end),
          "invalid space boundaries");
@@ -90,6 +93,7 @@ void ShenandoahHeapRegion::make_regular_allocation() {
     case _empty_committed:
       set_state(_regular);
     case _regular:
+    case _temp:
     case _pinned:
       return;
     default:
@@ -119,6 +123,7 @@ void ShenandoahHeapRegion::make_regular_bypass() {
       set_state(_pinned);
       return;
     case _regular:
+    case _temp:
     case _pinned:
       return;
     default:
@@ -303,6 +308,42 @@ void ShenandoahHeapRegion::make_committed_bypass() {
   }
 }
 
+void ShenandoahHeapRegion::make_temp_local() {
+  shenandoah_assert_heaplocked();
+  assert (ShenandoahHeap::heap()->is_evacuation_in_progress(), "Only allow during evac");
+  assert (is_empty(), "Region must be empty for this to happen");
+  assert (is_local(), "Must be performed on a local region");
+
+  switch (_state) {
+    case _empty_uncommitted:
+      do_commit();
+    case _empty_committed:
+      set_state(_temp);
+      return;
+    default:
+      report_illegal_transition("temp local");
+  }
+}
+
+void ShenandoahHeapRegion::make_temp_remote() {
+  shenandoah_assert_heaplocked();
+  assert (ShenandoahHeap::heap()->is_evacuation_in_progress(), "Only allow during evac");
+  assert (is_empty() || is_regular(), "Region must be empty or regular for this to happen");
+  assert (is_remote(), "Must be performed on a remote region");
+
+  switch (_state) {
+    case _regular:
+      set_state(_temp);
+    case _empty_uncommitted:
+      do_commit();
+    case _empty_committed:
+      set_state(_temp);
+      return;
+    default:
+      report_illegal_transition("temp remote");
+  }
+}
+
 void ShenandoahHeapRegion::reset_alloc_metadata() {
   _tlab_allocs = 0;
   _gclab_allocs = 0;
@@ -359,6 +400,9 @@ void ShenandoahHeapRegion::print_on(outputStream* st) const {
       break;
     case _pinned_cset:
       st->print("|CSP");
+      break;
+    case _temp:
+      st->print("|TMP");
       break;
     default:
       ShouldNotReachHere();
@@ -641,6 +685,7 @@ size_t ShenandoahHeapRegion::setup_sizes(size_t max_heap_size) {
 void ShenandoahHeapRegion::do_commit() {
   if (is_remote()) return;
   ShenandoahHeap* heap = ShenandoahHeap::heap();
+  // assert(!is_remote(), "Remote region should not reach here");
   if (!heap->is_heap_region_special() && !os::commit_memory((char *) bottom(), RegionSizeBytes, false)) {
     report_java_out_of_memory("Unable to commit region");
   }

@@ -45,11 +45,19 @@
 
 markOop  oopDesc::mark()      const {
   if (is_remote_oop()) {
-    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*) this);
-    // return header.mark_raw();
-    // return (markOop) Universe::heap()->remote_mem()->read<uintptr_t>((char*)this + mark_offset_in_bytes());
-    markOop ret = NULL;
-    Universe::heap()->remote_mem()->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
+      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      
+      return buffering_oop->mark();
+    }
+    assert(false, "Mark: not handling this yet");
+    markOop ret;
+    r_mem->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
     return ret;
   }
   return HeapAccess<MO_VOLATILE>::load_at(as_oop(), mark_offset_in_bytes());
@@ -57,8 +65,19 @@ markOop  oopDesc::mark()      const {
 
 markOop  oopDesc::mark_raw()  const {
   if (is_remote_oop()) {
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
+      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      
+      return buffering_oop->mark_raw();
+    }
+    assert(false, "Mark raw: not handling this yet");
     markOop ret;
-    Universe::heap()->remote_mem()->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
+    r_mem->read((char*)this + mark_offset_in_bytes(), (char*)&ret, sizeof(markOop));
     return ret;
   }
   return _mark;
@@ -81,11 +100,8 @@ void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){
 
 void oopDesc::set_mark(volatile markOop m) {
   if (is_remote_oop()) {
-    // read header
-    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
-    // header.set_mark_raw(m);
-    // Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
-    // write strate to remote
+    tty->print_cr("set_mark");
+    assert(false, "stuck here");
     Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
     return;
   }
@@ -95,7 +111,16 @@ void oopDesc::set_mark(volatile markOop m) {
 void oopDesc::set_mark_raw(volatile markOop m) {
   if (is_remote_oop()) {
     tty->print_cr("set_mark_raw");
-    Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      return oopDesc::set_mark_raw((HeapWord*)buffering_addr, m);
+    }
+    assert(false, "We are not here yet");
+    r_mem->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
     return;
   }
   _mark = m;
@@ -104,8 +129,17 @@ void oopDesc::set_mark_raw(volatile markOop m) {
 void oopDesc::set_mark_raw(HeapWord* mem, markOop m) {
   // assert(!is_remote_oop((void*) mem), "Must not be remote oop");
   if (is_remote_oop(mem)) {
-    tty->print_cr("release_set_mark");
-    Universe::heap()->remote_mem()->write((char*) mem + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    tty->print_cr("set_mark_raw");
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      oop buffering_oop = oop(buffering_addr);
+      tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)mem, buffering_addr, buffering_oop->klass_or_null_local());
+      return oopDesc::set_mark_raw((HeapWord*)buffering_addr, m);
+    }
+    assert(false, "We are not here yet");
+    r_mem->write((char*) mem + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
     return;
   }
   *(markOop*)(((char*)mem) + mark_offset_in_bytes()) = m;
@@ -114,7 +148,10 @@ void oopDesc::set_mark_raw(HeapWord* mem, markOop m) {
 void oopDesc::release_set_mark(markOop m) {
   if (is_remote_oop()) {
     tty->print_cr("release_set_mark");
-    Universe::heap()->remote_mem()->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
+    assert(false, "stuck here");
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    r_mem->write((char*) this + mark_offset_in_bytes(), (char*)&m, sizeof(markOop));
     return;
   }
   HeapAccess<MO_RELEASE>::store_at(as_oop(), mark_offset_in_bytes(), m);
@@ -129,8 +166,10 @@ markOop oopDesc::cas_set_mark(markOop new_mark, markOop old_mark) {
     //   // current equals to old, store new
     //   header.set_mark_raw(new_mark);
     //   Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
-    // } 
-    return (markOop)(void*) Universe::heap()->remote_mem()->remote_cas((char*)this + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
+    // }
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    return (markOop)(void*) r_mem->remote_cas((char*)this + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
     // return header.mark_raw();
   }
   return HeapAccess<>::atomic_cmpxchg_at(new_mark, as_oop(), mark_offset_in_bytes(), old_mark);
@@ -139,7 +178,9 @@ markOop oopDesc::cas_set_mark(markOop new_mark, markOop old_mark) {
 markOop oopDesc::cas_set_mark_raw(markOop new_mark, markOop old_mark, atomic_memory_order order) {
   if (is_remote_oop()) {
     tty->print_cr("markOop size = %lu, should be <= 8 bytes", sizeof(markOop));
-    return (markOop)(void*) Universe::heap()->remote_mem()->remote_cas(((char*)this) + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    return (markOop)(void*) r_mem->remote_cas(((char*)this) + mark_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_mark), reinterpret_cast<uintptr_t>(new_mark));
   }
   return Atomic::cmpxchg(new_mark, &_mark, old_mark, order);
 }
@@ -165,10 +206,24 @@ Klass* oopDesc::klass() const {
   // }
 
   if (is_remote_oop()) {
-    oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // assert(false, "stuck here");
+    // tty->print_cr("remote oop %p", this);
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      return buffering_oop->klass_or_null_local();
+    }
+    assert(false, "klass: now handling this yet");
+    // if (UseShenandoahGC) {
+    //   r_mem->is_in_evac_set((oop)(void*)this);
+    // }
+    // assert(false, "Hold it");
+    oopDesc header = r_mem->read_obj_header((void*)this);
     return header.klass_local();
   }
-
   return klass_local();
 }
 
@@ -183,7 +238,21 @@ Klass* oopDesc::klass_local() const {
 
 Klass* oopDesc::klass_or_null() const volatile {
   if (is_remote_oop((void*)this)) {
-    oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // assert(false, "stuck here");
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      return buffering_oop->klass_or_null_local();
+    }
+    assert(false, "klass_or_null: now handling this yet");
+    // if (UseShenandoahGC) {
+    //   r_mem->is_in_evac_set((oop)(void*)this);
+    // }
+    // assert(false, "Hold it");
+    oopDesc header = r_mem->read_obj_header((void*)this);
     return header.klass_or_null_local();
   }
   return klass_or_null_local();
@@ -241,23 +310,28 @@ narrowKlass* oopDesc::compressed_klass_addr() {
 void oopDesc::set_klass(Klass* k) {
   CHECK_SET_KLASS(k);
   if (is_remote_oop()) {
-    // read header
-    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
-    // if (UseCompressedClassPointers) {
-    //   *(header.compressed_klass_addr()) = Klass::encode_klass_not_null(k);
-    // } else {
-    //   *(header.klass_addr()) = k;
-    // }
-    // Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
+    // tty->print_cr("Before Set klass remote oop %p, klass %p", (void*)this, (void*)k);
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("set_klass: Remote obj %p, buffering at %p, from klass %p, to klass %p", (void*)this, buffering_addr, (void*)buffering_oop->klass_or_null_local(), (void*)k);
+      buffering_oop->set_klass(k);
+      // tty->print_cr("After Set klass remote oop %p, klass %p", (void*)this, (void*)buffering_oop->klass_or_null_local());
+      return;
+    }
+    assert(false, "set klass: now handling this yet");
 
     if (UseCompressedClassPointers) {
       narrowKlass nk = Klass::encode_klass_not_null(k);
-      Universe::heap()->remote_mem()->write((char*)compressed_klass_addr(), (char*)&nk, sizeof(narrowKlass));
+      r_mem->write((char*)compressed_klass_addr(), (char*)&nk, sizeof(narrowKlass));
     } else {
-      Universe::heap()->remote_mem()->write((char*)klass_addr(), (char*)&k, sizeof(Klass*));
+      r_mem->write((char*)klass_addr(), (char*)&k, sizeof(Klass*));
     }
     return;
   }
+  // tty->print_cr("Set klass local oop %p, klass %p", (void*)this, (void*)k);
   assert(!is_remote_oop(), "Should not be remote oop");
   if (UseCompressedClassPointers) {
     *compressed_klass_addr() = Klass::encode_klass_not_null(k);
@@ -270,14 +344,27 @@ void oopDesc::release_set_klass(HeapWord* mem, Klass* klass) {
   CHECK_SET_KLASS(klass);
   // assert(!is_remote_oop(), "Should not be remote oop");
   if (is_remote_oop((void*) mem)) {
+    // tty->print_cr("Before release Set klass remote oop %p, klass %p", (void*)mem, (void*)klass);
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("release_set_klass: Remote obj %p, buffering at %p, current klass %p, to klass %p", (void*)mem, buffering_addr, (void*)buffering_oop->klass_or_null_local(), (void*)klass);
+      oopDesc::release_set_klass((HeapWord*)buffering_addr, klass);
+      // tty->print_cr("After release Set klass remote oop %p, klass %p", (void*)mem, (void*)buffering_oop->klass_or_null_local());
+      return;
+    }
+    assert(false, "Not here yet");
     if (UseCompressedClassPointers) {
       narrowKlass nk = Klass::encode_klass_not_null(klass);
-      Universe::heap()->remote_mem()->write((char*)compressed_klass_addr(mem), (char*)&nk, sizeof(narrowKlass));
+      r_mem->write((char*)compressed_klass_addr(mem), (char*)&nk, sizeof(narrowKlass));
     } else {
-      Universe::heap()->remote_mem()->write((char*)klass_addr(mem), (char*)&klass, sizeof(Klass*));
+      r_mem->write((char*)klass_addr(mem), (char*)&klass, sizeof(Klass*));
     }
     return;
   }
+  // tty->print_cr("Set klass local oop %p, klass %p", (void*)mem, (void*)klass);
   if (UseCompressedClassPointers) {
     OrderAccess::release_store(compressed_klass_addr(mem),
                                Klass::encode_klass_not_null(klass));
@@ -289,12 +376,32 @@ void oopDesc::release_set_klass(HeapWord* mem, Klass* klass) {
 #undef CHECK_SET_KLASS
 
 int oopDesc::klass_gap() const {
+  if (is_remote_oop()) {
+    assert(false, "stuck here");
+    // if (Universe::heap()->remote_mem()->is_temp_forwarded((HeapWord*)this)) {
+    //   // is forwarded to local
+    //   oop local_oop = (oop)Universe::heap()->remote_mem()->resolve_temp_remote_forwarded((HeapWord*)this);
+    //   return *(int*)(((intptr_t)local_oop) + klass_gap_offset_in_bytes());
+    // }
+    int ret = 0;
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    r_mem->read((char*)this + klass_gap_offset_in_bytes(), (char*)&ret, sizeof(int));
+    return ret;
+  }
   return *(int*)(((intptr_t)this) + klass_gap_offset_in_bytes());
 }
 
 void oopDesc::set_klass_gap(HeapWord* mem, int v) {
   if (UseCompressedClassPointers) {
-    *(int*)(((char*)mem) + klass_gap_offset_in_bytes()) = v;
+    if (is_remote_oop(mem)) {
+      RemoteMem* r_mem = Universe::heap()->remote_mem();
+      assert(r_mem, "remote mem must be init");
+      assert(false, "stuck here");
+      r_mem->write((char*)mem + mark_offset_in_bytes(), (char*)&v, sizeof(int));
+    } else {
+      *(int*)(((char*)mem) + klass_gap_offset_in_bytes()) = v;
+    }
   }
 }
 
@@ -342,7 +449,8 @@ int oopDesc::size()  {
   return size_given_klass(klass());
 }
 
-int oopDesc::size_given_klass(Klass* klass, void* remote_oop)  {
+int oopDesc::size_given_klass(Klass* klass)  {
+  // tty->print_cr("Size given klass %p", klass);
   int lh = klass->layout_helper();
   int s;
 
@@ -373,11 +481,20 @@ int oopDesc::size_given_klass(Klass* klass, void* remote_oop)  {
       // Dat mod
       size_t array_length;
       if (is_remote_oop()) {
-        // only header is local, payload is remote
-        tty->print_cr("Reading from remote");
-        int temp_length = 0;
-        Universe::heap()->remote_mem()->read((char*)this + arrayOopDesc::length_offset_in_bytes(), (char*)&temp_length, sizeof(int));
-        array_length = (size_t) temp_length;
+        // if (Universe::heap()->remote_mem()->is_temp_forwarded((HeapWord*)this)) {
+        //   // is forwarded to local
+        //   oop local_oop = (oop)Universe::heap()->remote_mem()->resolve_temp_remote_forwarded((HeapWord*)this);
+        //   array_length = (size_t) ((arrayOop)local_oop)->length();
+        // } else {
+          tty->print_cr("Reading from remote");
+          RemoteMem* r_mem = Universe::heap()->remote_mem();
+          assert(r_mem, "remote mem must be init");
+          assert(false, "stuck here");
+          int temp_length = 0;
+          r_mem->read((char*)this + arrayOopDesc::length_offset_in_bytes(), (char*)&temp_length, sizeof(int));
+          array_length = (size_t) temp_length;
+        // }
+
       } else {
         // object is local, 
         array_length = (size_t) ((arrayOop)this)->length();
@@ -431,7 +548,11 @@ void*    oopDesc::field_addr_raw(int offset)     const { return reinterpret_cast
 void*    oopDesc::field_addr(int offset)         const { return Access<>::resolve(as_oop())->field_addr_raw(offset); }
 
 template <class T>
-T*       oopDesc::obj_field_addr_raw(int offset) const { return (T*) field_addr_raw(offset); }
+T*       oopDesc::obj_field_addr_raw(int offset) const {
+  // Dat TODO
+  // check for remote field load here ----------------------------
+  return (T*) field_addr_raw(offset);
+}
 
 template <typename T>
 size_t   oopDesc::field_offset(T* p) const { return pointer_delta((void*)p, (void*)this, 1); }
@@ -496,7 +617,9 @@ bool oopDesc::is_forwarded() const {
 
 // remote mem
 bool oopDesc::is_remote_oop(void* mem) {
+  if (mem == NULL) return false;
   if (!Universe::heap()->remote_mem()) return false;
+  assert(Universe::heap()->remote_mem(), "remote mem must be init");
   return Universe::heap()->remote_mem()->is_in((void*)mem);
 }
 

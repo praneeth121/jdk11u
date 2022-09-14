@@ -75,20 +75,45 @@ void PLAB::flush_and_retire_stats(PLABStats* stats) {
   _undo_wasted = 0;
 }
 
-void PLAB::retire(bool is_remote) {
-  _wasted += retire_internal(is_remote);
+void PLAB::retire() {
+  // if (oopDesc::is_remote_oop(bottom())) {
+  //   _wasted += retire_internal();
+  //   return;
+  // }
+  // tty->print_cr("retire");
+  _wasted += retire_internal();
 }
 
-size_t PLAB::retire_internal(bool is_remote) {
+size_t PLAB::retire_internal() {
+  // tty->print_cr("retire internal");
   size_t result = 0;
   if (_top < _hard_end) {
-    if (!is_remote) Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
+    // eventually have to implement this for remote mem
+    if (doEvacToRemote) {
+      RemoteMem* rmem = Universe::heap()->remote_mem();
+      assert(rmem, "remote mem must be init");
+      if (rmem->is_in(_top)) {
+        tty->print_cr("retiring remote tlab size %lu +++++++++++++", pointer_delta(_hard_end, _bottom));
+        rmem->fill_with_dummy_object(_top, _hard_end, true);
+        // rmem->check_consecutive_oop(_bottom, pointer_delta(_hard_end, _bottom));
+      } else {
+        assert(_top && _hard_end, "Both Top and Hard end must be init");
+        Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
+      }
+    } else {
+      // tty->print_cr("filling a local tlab");
+      assert(_top && _hard_end, "Both Top and Hard end must be init");
+      Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
+    }
+    // if (!is_remote) Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);
     result += invalidate();
   }
+  // tty->print_cr("retire internal finished");
   return result;
 }
 
 void PLAB::add_undo_waste(HeapWord* obj, size_t word_sz) {
+  tty->print_cr("add_undo_waste: filling a local tlab");
   Universe::heap()->fill_with_dummy_object(obj, obj + word_sz, true);
   _undo_wasted += word_sz;
 }
@@ -97,6 +122,14 @@ void PLAB::undo_last_allocation(HeapWord* obj, size_t word_sz) {
   assert(pointer_delta(_top, _bottom) >= word_sz, "Bad undo");
   assert(pointer_delta(_top, obj) == word_sz, "Bad undo");
   _top = obj;
+  // if (doEvacToRemote) {
+  //   if (_top == _bottom) {
+  //     // plab is empty
+  //     Universe::heap()->remote_mem()->try_undo_allocation(_top);
+  //     // Universe::heap()->remote_mem()->remove_region_from_evac_set()
+  //   }
+
+  // }
 }
 
 void PLAB::undo_allocation(HeapWord* obj, size_t word_sz) {

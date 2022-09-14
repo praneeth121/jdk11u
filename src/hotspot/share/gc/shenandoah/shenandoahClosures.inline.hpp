@@ -83,15 +83,23 @@ ShenandoahEvacuateUpdateRootsClosure::ShenandoahEvacuateUpdateRootsClosure() :
 template <class T>
 void ShenandoahEvacuateUpdateRootsClosure::do_oop_work(T* p) {
   assert(_heap->is_evacuation_in_progress(), "Only do this when evacuation is in progress");
+  assert(!oopDesc::is_remote_oop((void*)p), "root pointer must not be remote?????");
 
   T o = RawAccess<>::oop_load(p);
   if (! CompressedOops::is_null(o)) {
     oop obj = CompressedOops::decode_not_null(o);
+
+    if (oopDesc::is_remote_oop((void*)obj)) {
+      assert(!_heap->in_collection_set(obj), "already updated to remote, must not in collection set, will be handled later");
+    }
     if (_heap->in_collection_set(obj)) {
+      assert(!oopDesc::is_remote_oop((void*)obj), "we are not evacuating remote obj for now");
       shenandoah_assert_marked(p, obj);
       oop resolved = ShenandoahBarrierSet::resolve_forwarded_not_null(obj);
       if (resolved == obj) {
-        resolved = _heap->evacuate_object(obj, _thread);
+        // in collectionset but not evacuated yet
+        // tty->print_cr("evac a root");
+        resolved = _heap->evacuate_object(obj, _thread, true /*is root*/);
       }
       RawAccess<IS_NOT_NULL>::oop_store(p, resolved);
     }
