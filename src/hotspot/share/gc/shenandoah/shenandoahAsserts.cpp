@@ -179,7 +179,7 @@ void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* 
   if (doEvacToRemote) {
     assert(heap->remote_mem(), "remote mem must be init");
     if (heap->remote_mem()->is_in((void*)obj)) {
-      tty->print_cr("assert_correct: obj in remote");
+      // tty->print_cr("assert_correct: obj in remote");
       return;
     }
   }

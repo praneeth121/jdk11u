@@ -641,6 +641,8 @@ void RemoteMem::copy_to_rdma_buffer(oop p, HeapWord* addr, size_t size) {
 
 	// size_t object_offset = region_evac_offset_into_buffer + offset_from_evac_bottom;
 	HeapWord* to_addr = (HeapWord*)get_corresponding_evac_buffer_address(addr);
+	assert(to_addr >= (HeapWord*)_rdma_buff, "assert to_addr > _rdma_buff");
+	assert(to_addr < (HeapWord*)(_rdma_buff + ShenandoahHeapRegion::region_size_bytes()), "sanity");
 	memcpy((void*) to_addr, (void*)p, size * HeapWordSize);
 	// tty->print_cr("Successfully copy to rdma buffer: obj1 %p, klass1 %p | obj2 %p, klass2 %p | remote %p", 
 	// 		(void*)p, (void*)p->klass_or_null_local(),
@@ -650,7 +652,8 @@ void RemoteMem::copy_to_rdma_buffer(oop p, HeapWord* addr, size_t size) {
 
 void RemoteMem::flush_evac_buff() {
 	tty->print_cr("Flushing to remote mem with rdma");
-	// assert(false, "Hold it right there");
+	check_consecutive_oop();
+	assert(false, "Hold it right there");
 	// ShenandoahCollectionSet* cset = _heap->collection_set();
 	// make a destination set which added regions at evec phase
 	// iterate through the destination set and move objects from buffer to its evac bottom
@@ -822,7 +825,7 @@ void RemoteMem::record_new_tlab(size_t size_in_words) {
 	// 		obj = oop ((HeapWord*)obj + obj->size());
 	// 	}
 	// }
-	_current_buffer_offset_in_words = _current_buffer_offset_in_words + size_in_words;
+	_current_buffer_offset_in_words += + size_in_words;
 	tty->print_cr("Buffer offset: %lu", _current_buffer_offset_in_words);
 	// tty->print_cr("region size %lu", ShenandoahHeapRegion::region_size_words());
 	// bool validity = _current_buffer_offset_in_words < ShenandoahHeapRegion::region_size_words();
@@ -856,10 +859,25 @@ bool RemoteMem::is_in_evac_buff(void* addr) {
 void RemoteMem::check_consecutive_oop(void* remote_start, size_t words) {
 	tty->print_cr("check_consecutive_oop if tlab in region %lu: words %lu", _heap->heap_region_index_containing(remote_start), words);
 	HeapWord* buff_start = (HeapWord*)get_corresponding_evac_buffer_address(remote_start);
+	tty->print_cr("tlab location in buff %p", buff_start);
 	ResourceMark rm;
 	oop obj = oop(buff_start);
 	while (obj < buff_start + words){
+		// tty->print_cr("oop %p, klass %p %s, size %d", (void*)obj, (void*)obj->klass(), obj->klass()->external_name(), obj->size());
+		obj = oop ((HeapWord*)obj + obj->size());
+	}
+	tty->print_cr("-------------------------------------------------");
+}
+
+void RemoteMem::check_consecutive_oop() {
+	// directly check the rdma_buffer
+	tty->print_cr("check_consecutive_oop in rdma buffer");
+	ResourceMark rm;
+	oop obj = oop(_rdma_buff);
+	tty->print_cr("rdma_buff %p", _rdma_buff);
+	while (obj < (HeapWord*)_rdma_buff + _current_buffer_offset_in_words){
 		tty->print_cr("oop %p, klass %p %s, size %d", (void*)obj, (void*)obj->klass(), obj->klass()->external_name(), obj->size());
+		// tty->print_cr("oop %p, klass %p %s", (void*)obj, (void*)obj->klass(), obj->klass()->external_name());
 		obj = oop ((HeapWord*)obj + obj->size());
 	}
 	tty->print_cr("-------------------------------------------------");

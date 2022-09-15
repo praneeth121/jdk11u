@@ -44,6 +44,9 @@ namespace CompressedOops {
   inline bool is_null(narrowOop obj) { return obj == 0; }
 
   inline oop decode_not_null(narrowOop v) {
+    if (doEvacToRemote) {
+      assert(false, "Please turn off narrow oop");
+    }
     assert(!is_null(v), "narrow oop value can never be zero");
     address base = Universe::narrow_oop_base();
     int    shift = Universe::narrow_oop_shift();

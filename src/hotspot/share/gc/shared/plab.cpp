@@ -95,7 +95,7 @@ size_t PLAB::retire_internal() {
       if (rmem->is_in(_top)) {
         tty->print_cr("retiring remote tlab size %lu +++++++++++++", pointer_delta(_hard_end, _bottom));
         rmem->fill_with_dummy_object(_top, _hard_end, true);
-        // rmem->check_consecutive_oop(_bottom, pointer_delta(_hard_end, _bottom));
+        rmem->check_consecutive_oop(_bottom, pointer_delta(_hard_end, _bottom));
       } else {
         assert(_top && _hard_end, "Both Top and Hard end must be init");
         Universe::heap()->fill_with_dummy_object(_top, _hard_end, true);

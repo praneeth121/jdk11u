@@ -247,19 +247,29 @@ protected:
     HasDecorator<ds, MO_RELAXED>::value, T>::type
   load_internal(void* addr);
 
+  // template <DecoratorSet ds, typename T>
+  // static inline typename EnableIf<
+  //   HasDecorator<ds, MO_VOLATILE>::value, T>::type
+  // load_internal(void* addr) {
+  //   return *reinterpret_cast<const volatile T*>(addr);
+  // }
+
+  // template <DecoratorSet ds, typename T>
+  // static inline typename EnableIf<
+  //   HasDecorator<ds, MO_UNORDERED>::value, T>::type
+  // load_internal(void* addr) {
+  //   return *reinterpret_cast<T*>(addr);
+  // }
+
   template <DecoratorSet ds, typename T>
   static inline typename EnableIf<
     HasDecorator<ds, MO_VOLATILE>::value, T>::type
-  load_internal(void* addr) {
-    return *reinterpret_cast<const volatile T*>(addr);
-  }
+  load_internal(void* addr);
 
   template <DecoratorSet ds, typename T>
   static inline typename EnableIf<
     HasDecorator<ds, MO_UNORDERED>::value, T>::type
-  load_internal(void* addr) {
-    return *reinterpret_cast<T*>(addr);
-  }
+  load_internal(void* addr);
 
   template <DecoratorSet ds, typename T>
   static typename EnableIf<
@@ -276,19 +286,29 @@ protected:
     HasDecorator<ds, MO_RELAXED>::value>::type
   store_internal(void* addr, T value);
 
+  // template <DecoratorSet ds, typename T>
+  // static inline typename EnableIf<
+  //   HasDecorator<ds, MO_VOLATILE>::value>::type
+  // store_internal(void* addr, T value) {
+  //   (void)const_cast<T&>(*reinterpret_cast<volatile T*>(addr) = value);
+  // }
+
+  // template <DecoratorSet ds, typename T>
+  // static inline typename EnableIf<
+  //   HasDecorator<ds, MO_UNORDERED>::value>::type
+  // store_internal(void* addr, T value) {
+  //   *reinterpret_cast<T*>(addr) = value;
+  // }
+
   template <DecoratorSet ds, typename T>
   static inline typename EnableIf<
     HasDecorator<ds, MO_VOLATILE>::value>::type
-  store_internal(void* addr, T value) {
-    (void)const_cast<T&>(*reinterpret_cast<volatile T*>(addr) = value);
-  }
+  store_internal(void* addr, T value);
 
   template <DecoratorSet ds, typename T>
   static inline typename EnableIf<
     HasDecorator<ds, MO_UNORDERED>::value>::type
-  store_internal(void* addr, T value) {
-    *reinterpret_cast<T*>(addr) = value;
-  }
+  store_internal(void* addr, T value);
 
   template <DecoratorSet ds, typename T>
   static typename EnableIf<

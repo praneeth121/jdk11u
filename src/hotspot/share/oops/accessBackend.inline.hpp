@@ -131,6 +131,12 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_SEQ_CST>::value, T>::type
 RawAccessBarrier<decorators>::load_internal(void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
+
   if (support_IRIW_for_not_multiple_copy_atomic_cpu) {
     OrderAccess::fence();
   }
@@ -142,6 +148,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_ACQUIRE>::value, T>::type
 RawAccessBarrier<decorators>::load_internal(void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   return OrderAccess::load_acquire(reinterpret_cast<const volatile T*>(addr));
 }
 
@@ -150,7 +161,38 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_RELAXED>::value, T>::type
 RawAccessBarrier<decorators>::load_internal(void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   return Atomic::load(reinterpret_cast<const volatile T*>(addr));
+}
+
+template <DecoratorSet decorators>
+template <DecoratorSet ds, typename T>
+inline typename EnableIf<
+  HasDecorator<ds, MO_VOLATILE>::value, T>::type
+RawAccessBarrier<decorators>::load_internal(void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
+  return *reinterpret_cast<const volatile T*>(addr);
+}
+
+template <DecoratorSet decorators>
+template <DecoratorSet ds, typename T>
+inline typename EnableIf<
+  HasDecorator<ds, MO_UNORDERED>::value, T>::type
+RawAccessBarrier<decorators>::load_internal(void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
+  return *reinterpret_cast<T*>(addr);
 }
 
 template <DecoratorSet decorators>
@@ -158,6 +200,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_SEQ_CST>::value>::type
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   OrderAccess::release_store_fence(reinterpret_cast<volatile T*>(addr), value);
 }
 
@@ -166,6 +213,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_RELEASE>::value>::type
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   OrderAccess::release_store(reinterpret_cast<volatile T*>(addr), value);
 }
 
@@ -174,7 +226,39 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_RELAXED>::value>::type
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   Atomic::store(value, reinterpret_cast<volatile T*>(addr));
+}
+
+template <DecoratorSet decorators>
+template <DecoratorSet ds, typename T>
+inline typename EnableIf<
+  HasDecorator<ds, MO_VOLATILE>::value>::type
+RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
+  (void)const_cast<T&>(*reinterpret_cast<volatile T*>(addr) = value);
+}
+
+
+template <DecoratorSet decorators>
+template <DecoratorSet ds, typename T>
+inline typename EnableIf<
+  HasDecorator<ds, MO_UNORDERED>::value>::type
+RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
+  *reinterpret_cast<T*>(addr) = value;
 }
 
 template <DecoratorSet decorators>
@@ -182,6 +266,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_RELAXED>::value, T>::type
 RawAccessBarrier<decorators>::atomic_cmpxchg_internal(T new_value, void* addr, T compare_value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   return Atomic::cmpxchg(new_value,
                          reinterpret_cast<volatile T*>(addr),
                          compare_value,
@@ -193,6 +282,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_SEQ_CST>::value, T>::type
 RawAccessBarrier<decorators>::atomic_cmpxchg_internal(T new_value, void* addr, T compare_value) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   return Atomic::cmpxchg(new_value,
                          reinterpret_cast<volatile T*>(addr),
                          compare_value,
@@ -204,6 +298,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_SEQ_CST>::value, T>::type
 RawAccessBarrier<decorators>::atomic_xchg_internal(T new_value, void* addr) {
+  if (doEvacToRemote) { 
+    if (Universe::heap()->remote_mem()->is_in(addr)) {
+      assert(false, "accessing remote mem");
+    }
+  }
   return Atomic::xchg(new_value,
                       reinterpret_cast<volatile T*>(addr));
 }

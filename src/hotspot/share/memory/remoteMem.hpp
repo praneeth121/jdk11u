@@ -480,6 +480,7 @@ public:
 	void*	get_corresponding_evac_buffer_address(void* remote_addr);
 	bool	is_in_evac_buff(void* addr);
 	void	check_consecutive_oop(void* remote_start, size_t words);
+	void	check_consecutive_oop();
 	
 	// evac set utils
 	void 	add_region_to_evac_set		(ShenandoahHeapRegion* r);

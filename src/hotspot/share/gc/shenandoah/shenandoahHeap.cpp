@@ -1077,11 +1077,12 @@ HeapWord* ShenandoahHeap::allocate_memory_under_lock(ShenandoahAllocRequest& req
       assert(ret, "Result must not be null");
       // tty->print_cr("Ret: %p", ret);
       ShenandoahHeapRegion* remote_r = heap_region_containing(ret);
+      assert(remote_r->is_remote(), "Must be remote region");
       tty->print_cr("remote_r: %lu", remote_r->index());
-      r_mem->record_new_tlab(req.actual_size());
       // tty->print_cr("Finish record new tlab");
       if (remote_r->evac_bottom() == NULL) {
         tty->print_cr("Evac bottom is null, set it");
+        // Dat TODO: reset evac bottom
         // we are the first thread of old region or we are in a new region
         // set up evac bottom to be ret
         // record the starting offset in rdma buffer
@@ -1093,6 +1094,7 @@ HeapWord* ShenandoahHeap::allocate_memory_under_lock(ShenandoahAllocRequest& req
         // non-first threads do nothing
         assert(!in_new_region, "No way this is the first allocation to a new region");
       }
+      r_mem->record_new_tlab(req.actual_size());
       // tty->print_cr("is gc alloc, ret: %p", ret);
     } else {
       // ret is local
