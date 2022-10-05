@@ -101,6 +101,10 @@ void BarrierSetC1::load(LIRAccess& access, LIR_Opr result) {
   load_at_resolved(access, result);
 }
 
+void BarrierSetC1::access_pre_barrier(LIRGenerator* gen, LIR_Opr oop) {
+  assert(false, "Should not reach here");
+}
+
 LIR_Opr BarrierSetC1::atomic_cmpxchg_at(LIRAccess& access, LIRItem& cmp_value, LIRItem& new_value) {
   DecoratorSet decorators = access.decorators();
   bool in_heap = (decorators & IN_HEAP) != 0;

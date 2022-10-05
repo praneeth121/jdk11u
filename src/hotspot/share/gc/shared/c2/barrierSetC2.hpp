@@ -181,6 +181,8 @@ public:
   virtual Node* store_at(C2Access& access, C2AccessValue& val) const;
   virtual Node* load_at(C2Access& access, const Type* val_type) const;
 
+  virtual Node* access_pre_barrier(GraphKit* kit, Node* oop) const;
+
   virtual Node* atomic_cmpxchg_val_at(C2AtomicAccess& access, Node* expected_val,
                                       Node* new_val, const Type* val_type) const;
   virtual Node* atomic_cmpxchg_bool_at(C2AtomicAccess& access, Node* expected_val,

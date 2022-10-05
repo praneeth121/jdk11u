@@ -610,6 +610,9 @@ int java_lang_String::utf8_length(oop java_string) {
 }
 
 char* java_lang_String::as_utf8_string(oop java_string) {
+  if (oopDesc::is_remote_oop(java_string)) {
+    tty->print_cr("Remote string oop getting value");
+  }
   typeArrayOop value  = java_lang_String::value(java_string);
   int          length = java_lang_String::length(java_string);
   bool      is_latin1 = java_lang_String::is_latin1(java_string);

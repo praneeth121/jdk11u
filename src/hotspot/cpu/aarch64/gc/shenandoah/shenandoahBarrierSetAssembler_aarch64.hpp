@@ -60,6 +60,7 @@ private:
   void load_reference_barrier_not_null(MacroAssembler* masm, Register dst, Address load_addr);
 
   address generate_shenandoah_lrb(StubCodeGenerator* cgen);
+  address generate_pre_barrier(StubCodeGenerator* cgen);
 
 public:
   static address shenandoah_lrb();

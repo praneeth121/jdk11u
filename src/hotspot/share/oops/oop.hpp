@@ -84,14 +84,16 @@ class oopDesc {
   inline void init_mark();
   inline void init_mark_raw();
 
-  inline size_t access_counter_raw() const;
+  inline size_t access_counter() const;
   inline size_t access_counter_with_check() const;
 
   inline size_t gc_epoch_raw() const;
 
   inline void set_access_counter(size_t new_value);
   static inline void set_access_counter(HeapWord* mem, size_t new_value);
-  inline void increase_access_counter();
+
+  inline size_t increase_access_counter();
+  static inline void increase_access_counter(HeapWord* mem);
 
   inline void set_gc_epoch(size_t new_value);
   static inline void set_gc_epoch(HeapWord* mem, size_t new_value);
@@ -363,6 +365,8 @@ class oopDesc {
   static void* load_oop_raw(oop obj, int offset);
   static bool  is_valid(oop obj);
   static oop   oop_or_null(address addr);
+
+  oop operator -> () const;
 };
 
 #endif // SHARE_VM_OOPS_OOP_HPP

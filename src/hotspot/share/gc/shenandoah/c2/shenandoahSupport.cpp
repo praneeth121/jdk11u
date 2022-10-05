@@ -1069,6 +1069,39 @@ void ShenandoahBarrierC2Support::call_lrb_stub(Node*& ctrl, Node*& val, Node* lo
   phase->register_new_node(val, ctrl);
 }
 
+// void ShenandoahBarrierC2Support::call_access_pre_barrier_stub(Node*& ctrl, Node*& val, Node* load_addr, Node*& result_mem, Node* raw_mem, bool is_native, PhaseIdealLoop* phase) {
+//   Node* base = find_bottom_mem(ctrl, phase);
+//   MergeMemNode* mm = MergeMemNode::make(base);
+//   mm->set_memory_at(Compile::AliasIdxRaw, raw_mem);
+//   phase->register_new_node(mm, ctrl);
+
+//   address target = CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier);
+
+//   Node* call = new CallLeafNode(ShenandoahBarrierSetC2::access_pre_barrier_Type(),
+//                                 target,
+//                                 "access pre barrier", TypeRawPtr::BOTTOM);
+                        
+//   call->init_req(TypeFunc::Control, ctrl);
+//   call->init_req(TypeFunc::I_O, phase->C->top());
+//   call->init_req(TypeFunc::Memory, mm);
+//   call->init_req(TypeFunc::FramePtr, phase->C->top());
+//   call->init_req(TypeFunc::ReturnAdr, phase->C->top());
+//   call->init_req(TypeFunc::Parms, val);
+//   phase->register_control(call, loop, ctrl); // call becomes new ctrl
+//   ctrl = new ProjNode(call, TypeFunc::Control);
+//   phase->register_control(ctrl, loop, call);
+//   result_mem = new ProjNode(call, TypeFunc::Memory);
+//   phase->register_new_node(result_mem, call);
+//   val = new ProjNode(call, TypeFunc::Parms);
+//   phase->register_new_node(val, call);
+//   val = new CheckCastPPNode(ctrl, val, obj_type);
+//   phase->register_new_node(val, ctrl);
+
+  
+
+//   // missing impl
+// }
+
 void ShenandoahBarrierC2Support::fix_ctrl(Node* barrier, Node* region, const MemoryGraphFixer& fixer, Unique_Node_List& uses, Unique_Node_List& uses_to_ignore, uint last, PhaseIdealLoop* phase) {
   Node* ctrl = phase->get_ctrl(barrier);
   Node* init_raw_mem = fixer.find_mem(ctrl, barrier);
@@ -1147,6 +1180,8 @@ static Node* create_phis_on_call_return(Node* ctrl, Node* c, Node* n, Node* n_cl
 }
 
 void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
+  // dat todo add access counter code here
+
   ShenandoahBarrierSetC2State* state = ShenandoahBarrierSetC2::bsc2()->state();
 
   Unique_Node_List uses;
@@ -1622,6 +1657,35 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
   // Done expanding load-reference-barriers.
   assert(ShenandoahBarrierSetC2::bsc2()->state()->load_reference_barriers_count() == 0, "all load reference barrier nodes should have been replaced");
 
+
+  // expanding the access_pre_barrier
+  // for (int i = state->access_pre_barriers_count() -1; i >= 0; i--) {
+  //   AccessPreBarrierNode* apb = state->access_pre_barrier(i);
+
+  //   Node* ctrl = phase->get_ctrl(lrb);
+  //   Node* val = lrb->in(AccessPreBarrierNode::ValueIn);
+
+  //   Node* orig_ctrl = ctrl;
+
+  //   Node* raw_mem = fixer.find_mem(ctrl, lrb);
+  //   Node* init_raw_mem = raw_mem;
+  //   Node* raw_mem_for_ctrl = fixer.find_mem(ctrl, NULL);
+
+  //   IdealLoopTree *loop = phase->get_loop(ctrl);
+  //   CallStaticJavaNode* unc = lrb->pin_and_expand_null_check(phase->igvn());
+  //   Node* unc_ctrl = NULL;
+  //   if (unc != NULL) {
+  //     if (val->in(ShenandoahLoadReferenceBarrierNode::Control) != ctrl) {
+  //       unc = NULL;
+  //     } else {
+  //       unc_ctrl = val->in(ShenandoahLoadReferenceBarrierNode::Control);
+  //     }
+  //   }
+
+
+
+  // }
+  // start expanding IU barrier
   for (int i = state->iu_barriers_count() - 1; i >= 0; i--) {
     Node* barrier = state->iu_barrier(i);
     Node* pre_val = barrier->in(1);
@@ -1771,7 +1835,7 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
     phase->igvn().replace_node(barrier, pre_val);
   }
   assert(state->iu_barriers_count() == 0, "all enqueue barrier nodes should have been replaced");
-
+  // done expanding IU barrier
 }
 
 Node* ShenandoahBarrierC2Support::get_load_addr(PhaseIdealLoop* phase, VectorSet& visited, Node* in) {
@@ -3096,6 +3160,7 @@ void MemoryGraphFixer::fix_memory_uses(Node* mem, Node* replacement, Node* rep_p
   }
 }
 
+// ------------------------------- LRB --------------------------------
 ShenandoahLoadReferenceBarrierNode::ShenandoahLoadReferenceBarrierNode(Node* ctrl, Node* obj)
 : Node(ctrl, obj) {
   ShenandoahBarrierSetC2::bsc2()->state()->add_load_reference_barrier(this);
@@ -3190,6 +3255,7 @@ bool ShenandoahLoadReferenceBarrierNode::needs_barrier_impl(PhaseGVN* phase, Nod
     case Op_Proj:
       return needs_barrier_impl(phase, n->in(0), visited);
     case Op_ShenandoahLoadReferenceBarrier:
+    case Op_AccessPreBarrier:
       // tty->print_cr("optimize barrier on barrier");
       return false;
     case Op_Parm:
@@ -3403,4 +3469,10 @@ CallStaticJavaNode* ShenandoahLoadReferenceBarrierNode::pin_and_expand_null_chec
     return unc;
   }
   return NULL;
+}
+
+// ------------------------------- LRB --------------------------------
+AccessPreBarrierNode::AccessPreBarrierNode(Node* ctrl, Node* obj)
+: Node(ctrl, obj) {
+  ShenandoahBarrierSetC2::bsc2()->state()->add_access_pre_barrier(this);
 }

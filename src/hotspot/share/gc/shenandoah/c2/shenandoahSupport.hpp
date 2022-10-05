@@ -87,6 +87,8 @@ public:
 #endif
 };
 
+
+// ---------------------------------------------- store barrier
 class ShenandoahIUBarrierNode : public Node {
 public:
   ShenandoahIUBarrierNode(Node* val);
@@ -225,6 +227,7 @@ public:
   virtual int Opcode() const;
 };
 
+// ---------------------------------------------- load barrier
 class ShenandoahLoadReferenceBarrierNode : public Node {
 public:
   enum {
@@ -255,6 +258,18 @@ public:
 private:
   bool needs_barrier(PhaseGVN* phase, Node* n);
   bool needs_barrier_impl(PhaseGVN* phase, Node* n, Unique_Node_List &visited);
+};
+
+class AccessPreBarrierNode : public Node {
+public:
+  enum {
+    Control,
+    ValueIn
+  };
+
+  AccessPreBarrierNode(Node* ctrl, Node* oop);
+
+  virtual int Opcode() const;
 };
 
 

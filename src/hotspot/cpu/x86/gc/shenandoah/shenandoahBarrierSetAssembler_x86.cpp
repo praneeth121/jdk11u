@@ -45,6 +45,7 @@
 #define __ masm->
 
 address ShenandoahBarrierSetAssembler::_shenandoah_lrb = NULL;
+address ShenandoahBarrierSetAssembler::_pre_barrier = NULL;
 
 static void save_machine_state(MacroAssembler* masm, bool handle_gpr, bool handle_fp) {
   if (handle_gpr) {
@@ -386,6 +387,71 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier_not_null(MacroAssembl
 #endif
 }
 
+void ShenandoahBarrierSetAssembler::access_pre_barrier_not_null(MacroAssembler* masm, Address oop, Register tmp) {
+  Label done;
+
+#ifdef _LP64
+  Register thread = r15_thread;
+#else
+  Register thread = rcx;
+  if (thread == dst) {
+    thread = rbx;
+  }
+  __ push(thread);
+  __ get_thread(thread);
+#endif
+
+  save_machine_state(masm, /* handle_gpr = */ false, /* handle_fp = */ true);
+
+  // // Use rsi for oop
+  const Register obj_addr = rsi;
+  // // Setup address parameter first, if it does not clobber oop in dst
+  // bool need_addr_setup = (src_addr != dst);
+
+  // if (need_addr_setup) {
+  //   __ push(src_addr);
+  //   __ lea(src_addr, src);
+
+  //   if (dst != rax) {
+  //     // Move obj into rax and save rax
+  //     __ push(rax);
+  //     __ movptr(rax, dst);
+  //   }
+  // } else {
+  //   // dst == rsi
+  //   __ push(rax);
+  //   __ movptr(rax, dst);
+
+  //   // we can clobber it, since it is outgoing register
+  //   __ lea(src_addr, src);
+  // }
+  __ push(rsi);
+  __ push(rax);
+
+  __ lea(obj_addr, oop);
+  __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, ShenandoahBarrierSetAssembler::pre_barrier())));
+
+  // if (need_addr_setup) {
+  //   if (dst != rax) {
+  //     __ movptr(dst, rax);
+  //     __ pop(rax);
+  //   }
+  //   __ pop(src_addr);
+  // } else {
+  //   __ movptr(dst, rax);
+  //   __ pop(rax);
+  // }
+  __ pop(rax);
+  __ pop(rsi);
+
+  restore_machine_state(masm, /* handle_gpr = */ false, /* handle_fp = */ true);
+
+  __ bind(done);
+#ifndef _LP64
+  __ pop(thread);
+#endif
+}
+
 void ShenandoahBarrierSetAssembler::iu_barrier(MacroAssembler* masm, Register dst, Register tmp) {
   if (ShenandoahIUBarrier) {
     iu_barrier_impl(masm, dst, tmp);
@@ -428,6 +494,17 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
     load_reference_barrier_not_null(masm, dst, src);
     __ bind(done);
   }
+}
+
+void ShenandoahBarrierSetAssembler::access_pre_barrier(MacroAssembler* masm, Address oop, Register tmp1) {
+  // assert_different_registers(obj, tmp1);
+  // Label done;
+  // __ testptr(dst, dst);
+  // __ jcc(Assembler::zero, done);
+  access_pre_barrier_not_null(masm, oop, tmp1);
+  // __ bind(done);
+
+  return;
 }
 
 //
@@ -1081,6 +1158,22 @@ void ShenandoahBarrierSetAssembler::gen_load_reference_barrier_stub(LIR_Assemble
   __ jmp(*stub->continuation());
 }
 
+void ShenandoahBarrierSetAssembler::gen_access_pre_barrier_stub(LIR_Assembler* ce, AccessPreBarrierStub* stub) {
+  ShenandoahBarrierSetC1* bs = (ShenandoahBarrierSetC1*)BarrierSet::barrier_set()->barrier_set_c1();
+  __ bind(*stub->entry());
+
+  Register obj = stub->obj()->as_register();
+
+  // Label slow_path;
+
+  // __ bind(slow_path);
+  ce->store_parameter(obj, 0);
+  // ce->store_parameter(addr, 1);
+  __ call(RuntimeAddress(bs->access_pre_barrier_rt_code_blob()->code_begin()));
+
+  __ jmp(*stub->continuation());
+}
+
 #undef __
 
 #define __ sasm->
@@ -1166,6 +1259,47 @@ void ShenandoahBarrierSetAssembler::generate_c1_load_reference_barrier_runtime_s
   __ epilogue();
 }
 
+void ShenandoahBarrierSetAssembler::generate_access_pre_barrier_runtime_stub(StubAssembler* sasm) {
+  __ prologue("shenandoah_access_pre_barrier", false);
+  // arg0 : object to be resolved
+  __ push(c_rarg0);
+  __ save_live_registers_no_oop_map(true);
+
+// #ifdef _LP64
+//   __ load_parameter(0, c_rarg0);
+//   // __ load_parameter(1, c_rarg1);
+//   // if (UseCompressedOops) {
+//   //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow), c_rarg0, c_rarg1);
+//   // } else {
+//   //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), c_rarg0, c_rarg1);
+//   // }
+
+//   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier), c_rarg0);
+
+// #else
+//   __ load_parameter(0, rax);
+//   // __ load_parameter(1, rbx);
+//   // __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), rax, rbx);
+//   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier), rax);
+// #endif
+
+
+  __ load_parameter(0, c_rarg0);
+  // __ load_parameter(1, c_rarg1);
+  // if (UseCompressedOops) {
+  //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow), c_rarg0, c_rarg1);
+  // } else {
+  //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), c_rarg0, c_rarg1);
+  // }
+
+  __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c1), c_rarg0);
+
+  // __ restore_live_registers_except_rax(true);
+  __ restore_live_registers(true);
+  __ pop(c_rarg0);
+  __ epilogue();
+}
+
 #undef __
 
 #endif // COMPILER1
@@ -1173,6 +1307,11 @@ void ShenandoahBarrierSetAssembler::generate_c1_load_reference_barrier_runtime_s
 address ShenandoahBarrierSetAssembler::shenandoah_lrb() {
   assert(_shenandoah_lrb != NULL, "need load reference barrier stub");
   return _shenandoah_lrb;
+}
+
+address ShenandoahBarrierSetAssembler::pre_barrier() {
+  assert(_pre_barrier != NULL, "need load reference barrier stub");
+  return _pre_barrier;
 }
 
 #define __ cgen->assembler()->
@@ -1259,12 +1398,76 @@ address ShenandoahBarrierSetAssembler::generate_shenandoah_lrb(StubCodeGenerator
   return start;
 }
 
+/*
+ *  Incoming parameters:
+ *  rsi: oop
+ */
+address ShenandoahBarrierSetAssembler::generate_pre_barrier(StubCodeGenerator* cgen) {
+  __ align(CodeEntryAlignment);
+  StubCodeMark mark(cgen, "StubRoutines", "shenandoah_lrb");
+  address start = __ pc();
+  // __ verify_oop(rax);
+  Register tmp1 = rdi;
+  Register tmp2 = LP64_ONLY(r8) NOT_LP64(rbx);
+
+
+  __ push(tmp1);
+  __ push(tmp2);
+
+    __ push(rcx);
+  __ push(rdx);
+  __ push(rdi);
+#ifdef _LP64
+  __ push(r8);
+  __ push(r9);
+  __ push(r10);
+  __ push(r11);
+  __ push(r12);
+  __ push(r13);
+  __ push(r14);
+  __ push(r15);
+#endif
+  __ push(rbp);
+  __ movptr(rbp, rsp);
+  __ andptr(rsp, -StackAlignmentInBytes);
+  __ push_FPU_state();
+
+
+
+  // implementation here
+  __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier), rsi);
+
+  
+  __ pop_FPU_state();
+  __ movptr(rsp, rbp);
+  __ pop(rbp);
+#ifdef _LP64
+  __ pop(r15);
+  __ pop(r14);
+  __ pop(r13);
+  __ pop(r12);
+  __ pop(r11);
+  __ pop(r10);
+  __ pop(r9);
+  __ pop(r8);
+#endif
+  __ pop(rdi);
+  __ pop(rdx);
+  __ pop(rcx);
+
+  __ pop(tmp1);
+  __ pop(tmp2);
+  __ ret(0);
+
+  return start;
+}
+
 #undef __
 
 void ShenandoahBarrierSetAssembler::barrier_stubs_init() {
+  int stub_code_size = 4096;
+  ResourceMark rm;
   if (ShenandoahLoadRefBarrier) {
-    int stub_code_size = 4096;
-    ResourceMark rm;
     BufferBlob* bb = BufferBlob::create("shenandoah_barrier_stubs", stub_code_size);
     CodeBuffer buf(bb);
     StubCodeGenerator cgen(&buf);
@@ -1272,10 +1475,17 @@ void ShenandoahBarrierSetAssembler::barrier_stubs_init() {
   }
 
   // rdma_load_barrier
-  int rlrb_stub_code_size = 4096;
-  ResourceMark rlrb_rm;
-  BufferBlob* rlrb_bb = BufferBlob::create("rdma_load_barrier_stubs", rlrb_stub_code_size);
-  CodeBuffer rlrb_buf(rlrb_bb);
-  StubCodeGenerator rlrb_cgen(&rlrb_buf);
-  _rdma_load_barrier = generate_rdma_load_barrier(&rlrb_cgen);
+  // int rlrb_stub_code_size = 4096;
+  // ResourceMark rlrb_rm;
+  // BufferBlob* rlrb_bb = BufferBlob::create("rdma_load_barrier_stubs", rlrb_stub_code_size);
+  // CodeBuffer rlrb_buf(rlrb_bb);
+  // StubCodeGenerator rlrb_cgen(&rlrb_buf);
+  // _rdma_load_barrier = generate_rdma_load_barrier(&rlrb_cgen);
+
+
+  // create pre barrier code stub
+  BufferBlob* bb_pb = BufferBlob::create("pre_barrier_stub", stub_code_size);
+  CodeBuffer buf_pb(bb_pb);
+  StubCodeGenerator cgen_pb(&buf_pb);
+  _pre_barrier = generate_pre_barrier(&cgen_pb);
 }

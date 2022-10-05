@@ -3464,6 +3464,9 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   __ bind(*stub->continuation());
 }
 
+void LIR_Assembler::emit_pre_barrier(LIR_OpPreBarrier* op) {
+}
+
 void LIR_Assembler::emit_updatecrc32(LIR_OpUpdateCRC32* op) {
   assert(op->crc()->is_single_cpu(),  "crc must be register");
   assert(op->val()->is_single_cpu(),  "byte value must be register");

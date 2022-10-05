@@ -1082,7 +1082,8 @@ void ConnectionGraph::process_call_arguments(CallNode *call) {
                   strcmp(call->as_CallLeaf()->_name, "mulAdd") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "montgomery_multiply") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "montgomery_square") == 0 ||
-                  strcmp(call->as_CallLeaf()->_name, "vectorizedMismatch") == 0)
+                  strcmp(call->as_CallLeaf()->_name, "vectorizedMismatch") == 0 ||
+                  strcmp(call->as_CallLeaf()->_name, "access_pre_barrier") == 0)
                  ))) {
             call->dump();
             fatal("EA unexpected CallLeaf %s", call->as_CallLeaf()->_name);

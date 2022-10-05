@@ -228,6 +228,25 @@ oop oopDesc::oop_or_null(address addr) {
   return NULL;
 }
 
+oop oopDesc::operator ->() const {
+  assert(false, "Should be useless");
+  if (is_remote_oop()) {
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
+      tty->print_cr("Arrow operation of remote addr");
+      oop buffering_oop = oop(buffering_addr);
+      return buffering_oop;
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
+      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+    }
+    // if is remote and not buffered, procceed, will be handled at each called function
+    return this;
+  }
+  return this;
+}
+
 oop oopDesc::obj_field_acquire(int offset) const                      { return HeapAccess<MO_ACQUIRE>::oop_load_at(as_oop(), offset); }
 
 void oopDesc::obj_field_put_raw(int offset, oop value)                { RawAccess<>::oop_store_at(as_oop(), offset, value); }

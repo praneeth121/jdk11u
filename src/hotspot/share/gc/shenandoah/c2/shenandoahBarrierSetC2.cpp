@@ -88,6 +88,24 @@ void ShenandoahBarrierSetC2State::remove_load_reference_barrier(ShenandoahLoadRe
   }
 }
 
+int ShenandoahBarrierSetC2State::access_pre_barriers_count() const {
+  return _access_pre_barriers->length();
+}
+
+AccessPreBarrierNode* ShenandoahBarrierSetC2State::access_pre_barrier(int idx) const {
+  return _access_pre_barriers->at(idx);
+}
+
+void ShenandoahBarrierSetC2State::add_access_pre_barrier(AccessPreBarrierNode* n) {
+  assert(!_access_pre_barriers->contains(n), "duplicate barrier");
+  _access_pre_barriers->append(n);
+}
+
+void ShenandoahBarrierSetC2State::remove_access_pre_barrier(AccessPreBarrierNode* n) {
+  assert(_access_pre_barriers->contains(n), "must contain");
+  _access_pre_barriers->remove(n);
+}
+
 Node* ShenandoahBarrierSetC2::shenandoah_iu_barrier(GraphKit* kit, Node* obj) const {
   if (ShenandoahIUBarrier) {
     return kit->gvn().transform(new ShenandoahIUBarrierNode(obj));
@@ -307,6 +325,15 @@ bool ShenandoahBarrierSetC2::is_shenandoah_lrb_call(Node* call) {
          (entry_point == CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow));
 }
 
+bool ShenandoahBarrierSetC2::is_access_pre_barrier_call(Node* call) {
+  if (!call->is_CallLeaf()) {
+    return false;
+  }
+
+  address entry_point = call->as_CallLeaf()->entry_point();
+  return (entry_point == CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier));
+}
+
 bool ShenandoahBarrierSetC2::is_shenandoah_marking_if(PhaseTransform *phase, Node* n) {
   if (n->Opcode() != Op_If) {
     return false;
@@ -490,6 +517,18 @@ const TypeFunc* ShenandoahBarrierSetC2::shenandoah_load_reference_barrier_Type()
   return TypeFunc::make(domain, range);
 }
 
+const TypeFunc* ShenandoahBarrierSetC2::access_pre_barrier_Type() {
+  const Type **fields = TypeTuple::fields(1);
+  fields[TypeFunc::Parms+0] = TypeOopPtr::NOTNULL; // src oop
+  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+1, fields);
+
+  // create result type (range)
+  fields = TypeTuple::fields(0);
+  const TypeTuple *range = TypeTuple::make(TypeFunc::Parms+0, fields);
+
+  return TypeFunc::make(domain, range);
+}
+
 Node* ShenandoahBarrierSetC2::store_at_resolved(C2Access& access, C2AccessValue& val) const {
   DecoratorSet decorators = access.decorators();
 
@@ -572,6 +611,18 @@ Node* ShenandoahBarrierSetC2::load_at_resolved(C2Access& access, const Type* val
   }
 
   return load;
+}
+
+Node* ShenandoahBarrierSetC2::access_pre_barrier(GraphKit* kit, Node* oop) const {
+  // apb = new AccessPreBarrierNode(NULL, oop);
+  // apb = kit->gvn().transform(apb);
+  // return apb; // apb should be the same oop
+
+  kit->make_runtime_call(GraphKit::RC_LEAF, access_pre_barrier_Type(),
+                         CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c2),
+                         "access_pre_barrier", TypeRawPtr::BOTTOM, oop);
+  return oop;
+
 }
 
 static void pin_atomic_op(C2AtomicAccess& access) {

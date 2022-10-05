@@ -2198,6 +2198,7 @@ void Parse::do_one_bytecode() {
     break;
   }
 
+  // dat todo: access barrier here
   case Bytecodes::_baload:  array_load(T_BYTE);    break;
   case Bytecodes::_caload:  array_load(T_CHAR);    break;
   case Bytecodes::_iaload:  array_load(T_INT);     break;

@@ -877,6 +877,7 @@ class    LIR_OpTypeCheck;
 class    LIR_OpCompareAndSwap;
 class    LIR_OpProfileCall;
 class    LIR_OpProfileType;
+class    LIR_OpPreBarrier;
 #ifdef ASSERT
 class    LIR_OpAssert;
 #endif
@@ -998,6 +999,9 @@ enum LIR_Code {
     , lir_profile_call
     , lir_profile_type
   , end_opMDOProfile
+  , begin_opPreBarrier
+    , lir_pre_barrier
+  , end_opPreBarrier
   , begin_opAssert
     , lir_assert
   , end_opAssert
@@ -1125,6 +1129,7 @@ class LIR_Op: public CompilationResourceObj {
   virtual LIR_OpDelay* as_OpDelay() { return NULL; }
   virtual LIR_OpLock* as_OpLock() { return NULL; }
   virtual LIR_OpAllocArray* as_OpAllocArray() { return NULL; }
+  virtual LIR_OpPreBarrier* as_OpPreBarrier() { return NULL; }
   virtual LIR_OpAllocObj* as_OpAllocObj() { return NULL; }
   virtual LIR_OpRoundFP* as_OpRoundFP() { return NULL; }
   virtual LIR_OpBranch* as_OpBranch() { return NULL; }
@@ -1743,6 +1748,26 @@ class LIR_OpAllocArray : public LIR_Op {
   virtual void print_instr(outputStream* out) const PRODUCT_RETURN;
 };
 
+class LIR_OpPreBarrier : public LIR_Op {
+  friend class LIR_OpVisitState;
+
+private:
+  LIR_Opr   _base_oop;
+  LIR_Opr   _tmp1;
+
+public:
+  LIR_OpPreBarrier(LIR_Opr base_oop, LIR_Opr tmp1)
+    : LIR_Op(lir_pre_barrier, LIR_OprFact::illegalOpr, NULL)
+    , _base_oop(base_oop)
+    , _tmp1(tmp1) {}
+
+  LIR_Opr base_oop()    const                     { return _base_oop;     }
+  LIR_Opr tmp1()        const                     { return _tmp1;         }
+
+  virtual void emit_code(LIR_Assembler* masm);
+  virtual LIR_OpPreBarrier * as_OpPreBarrier () { return this; }
+  virtual void print_instr(outputStream* out) const PRODUCT_RETURN;
+};
 
 class LIR_Op3: public LIR_Op {
  friend class LIR_OpVisitState;
@@ -2194,6 +2219,8 @@ class LIR_List: public CompilationResourceObj {
 
   void allocate_object(LIR_Opr dst, LIR_Opr t1, LIR_Opr t2, LIR_Opr t3, LIR_Opr t4, int header_size, int object_size, LIR_Opr klass, bool init_check, CodeStub* stub);
   void allocate_array(LIR_Opr dst, LIR_Opr len, LIR_Opr t1,LIR_Opr t2, LIR_Opr t3,LIR_Opr t4, BasicType type, LIR_Opr klass, CodeStub* stub);
+
+  void pre_barrier(LIR_Opr base_oop, LIR_Opr tmp1);
 
   // jump is an unconditional branch
   void jump(BlockBegin* block) {

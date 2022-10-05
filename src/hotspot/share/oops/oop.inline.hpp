@@ -49,6 +49,7 @@ markOop  oopDesc::mark()      const {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((oop)(void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
       //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
@@ -69,6 +70,7 @@ markOop  oopDesc::mark_raw()  const {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((oop)(void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
       //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
@@ -90,12 +92,48 @@ markOop* oopDesc::mark_addr_raw() const {
 
 void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){
   assert(!is_remote_oop((void*) mem), "Should not be remote oop");
-  *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = new_value;
+  *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = (size_t) new_value;
+}
+
+void oopDesc::set_access_counter(size_t new_value) {
+  // uintptr_t val = (uintptr_t)new_value;
+  if (is_remote_oop()) {
+    tty->print_cr("set_mark_raw");
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
+      oop buffering_oop = oop(buffering_addr);
+      tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      return HeapAccess<MO_VOLATILE>::store_at(buffering_oop, access_counter_offset_in_bytes(), new_value);
+    }
+    assert(false, "We are not here yet");
+    r_mem->write((char*) this + access_counter_offset_in_bytes(), (char*)&new_value, sizeof(size_t));
+    return;
+  }
+  HeapAccess<MO_VOLATILE>::store_at(as_oop(), access_counter_offset_in_bytes(), new_value);
+}
+
+size_t oopDesc::increase_access_counter() {
+  // increase_access_counter(this);
+  size_t ac = access_counter();
+  ac += 1;
+  set_access_counter(ac);
+  return ac;
+}
+
+void oopDesc::increase_access_counter(HeapWord* mem) {
+  oop obj = oop(mem);
+  size_t ac = obj->access_counter();
+  ac += 1;
+  obj->set_access_counter(mem, ac);
+
 }
 
 void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){
   assert(!is_remote_oop((void*) mem), "Must not be remote oop");
-  *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = new_value;
+  *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = (size_t)new_value;
 }
 
 void oopDesc::set_mark(volatile markOop m) {
@@ -115,6 +153,7 @@ void oopDesc::set_mark_raw(volatile markOop m) {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
       return oopDesc::set_mark_raw((HeapWord*)buffering_addr, m);
@@ -134,6 +173,7 @@ void oopDesc::set_mark_raw(HeapWord* mem, markOop m) {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((void*)mem)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)mem, buffering_addr, buffering_oop->klass_or_null_local());
       return oopDesc::set_mark_raw((HeapWord*)buffering_addr, m);
@@ -193,6 +233,27 @@ void oopDesc::init_mark_raw() {
   set_mark_raw(markOopDesc::prototype_for_object(this));
 }
 
+size_t oopDesc::access_counter() const {
+  if (is_remote_oop()) {
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((oop)(void*)this)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
+      oop buffering_oop = oop(buffering_addr);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
+      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      
+      return HeapAccess<MO_VOLATILE>::load_at(buffering_oop, access_counter_offset_in_bytes());
+    }
+    assert(false, "Mark: not handling this yet");
+    size_t ret;
+    r_mem->read((char*)this + access_counter_offset_in_bytes(), (char*)&ret, sizeof(size_t));
+    return ret;
+  }
+  return HeapAccess<MO_VOLATILE>::load_at(as_oop(), access_counter_offset_in_bytes());
+}
+
 Klass* oopDesc::klass() const {
   // if (doEvacToRemote && UseShenandoahGC) {
   //   CollectedHeap* heap = Universe::heap();
@@ -212,9 +273,10 @@ Klass* oopDesc::klass() const {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((oop)(void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
-      return buffering_oop->klass_or_null_local();
+      return buffering_oop->klass_local();
     }
     assert(false, "klass: now handling this yet");
     // if (UseShenandoahGC) {
@@ -243,6 +305,7 @@ Klass* oopDesc::klass_or_null() const volatile {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((oop)(void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
       return buffering_oop->klass_or_null_local();
@@ -315,6 +378,7 @@ void oopDesc::set_klass(Klass* k) {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("set_klass: Remote obj %p, buffering at %p, from klass %p, to klass %p", (void*)this, buffering_addr, (void*)buffering_oop->klass_or_null_local(), (void*)k);
       buffering_oop->set_klass(k);
@@ -349,6 +413,7 @@ void oopDesc::release_set_klass(HeapWord* mem, Klass* klass) {
     assert(r_mem, "remote mem must be init");
     if (r_mem->is_in_evac_set((void*)mem)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
       // tty->print_cr("release_set_klass: Remote obj %p, buffering at %p, current klass %p, to klass %p", (void*)mem, buffering_addr, (void*)buffering_oop->klass_or_null_local(), (void*)klass);
       oopDesc::release_set_klass((HeapWord*)buffering_addr, klass);
@@ -451,6 +516,7 @@ int oopDesc::size()  {
 
 int oopDesc::size_given_klass(Klass* klass)  {
   // tty->print_cr("Size given klass %p", klass);
+  assert(klass, "klass must not be null");
   int lh = klass->layout_helper();
   int s;
 
@@ -481,19 +547,27 @@ int oopDesc::size_given_klass(Klass* klass)  {
       // Dat mod
       size_t array_length;
       if (is_remote_oop()) {
-        // if (Universe::heap()->remote_mem()->is_temp_forwarded((HeapWord*)this)) {
-        //   // is forwarded to local
-        //   oop local_oop = (oop)Universe::heap()->remote_mem()->resolve_temp_remote_forwarded((HeapWord*)this);
-        //   array_length = (size_t) ((arrayOop)local_oop)->length();
-        // } else {
-          tty->print_cr("Reading from remote");
-          RemoteMem* r_mem = Universe::heap()->remote_mem();
-          assert(r_mem, "remote mem must be init");
-          assert(false, "stuck here");
+        RemoteMem* r_mem = Universe::heap()->remote_mem();
+        assert(r_mem, "remote mem must be init");
+        if (r_mem->is_in_evac_set(this)) {
+          tty->print_cr("Buffered remote");
+          void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+          assert(buffering_addr, "remote addr must not be null");
+          // tty->print_cr("Reading from remote oop %p, buffering at %p, klass %p, name %s", this, buffering_addr,klass, klass->external_name());
+          // oop buffering_oop = oop(buffering_addr);
+          array_length = (size_t) ((arrayOop)buffering_addr)->length();
+          // if (l == 0) {
+          //   tty->print_cr("Size 0 from remote oop %p, buffering at %p, klass %p", this, buffering_addr, ((arrayOop)buffering_addr)->klass());
+          // }
+          // return l;
+        } else {
+          tty->print_cr("Non-buffered remote Need handling");
+          // assert(false, "Need handling");
+          tty->print_cr("Remote obj, not buffered, handle this with rdma call");
           int temp_length = 0;
           r_mem->read((char*)this + arrayOopDesc::length_offset_in_bytes(), (char*)&temp_length, sizeof(int));
           array_length = (size_t) temp_length;
-        // }
+        }
 
       } else {
         // object is local, 

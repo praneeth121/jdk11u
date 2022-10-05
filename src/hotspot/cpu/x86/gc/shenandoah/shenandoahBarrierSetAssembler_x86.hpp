@@ -31,6 +31,7 @@ class LIR_Assembler;
 class ShenandoahPreBarrierStub;
 class ShenandoahLoadReferenceBarrierStub;
 class StubAssembler;
+class AccessPreBarrierStub;
 #endif
 class StubCodeGenerator;
 
@@ -38,6 +39,7 @@ class ShenandoahBarrierSetAssembler: public BarrierSetAssembler {
 private:
 
   static address _shenandoah_lrb;
+  static address _pre_barrier;
 
   void satb_write_barrier_pre(MacroAssembler* masm,
                               Register obj,
@@ -56,29 +58,38 @@ private:
                                     bool expand_call);
 
   void load_reference_barrier_not_null(MacroAssembler* masm, Register dst, Address src);
+  void access_pre_barrier_not_null(MacroAssembler* masm, Address oop, Register tmp);
 
   void iu_barrier_impl(MacroAssembler* masm, Register dst, Register tmp);
 
   address generate_shenandoah_lrb(StubCodeGenerator* cgen);
+  address generate_pre_barrier(StubCodeGenerator* cgen);
 
 public:
   static address shenandoah_lrb();
+  static address pre_barrier();
 
   void iu_barrier(MacroAssembler* masm, Register dst, Register tmp);
 #ifdef COMPILER1
   void gen_pre_barrier_stub(LIR_Assembler* ce, ShenandoahPreBarrierStub* stub);
+  void gen_access_pre_barrier_stub(LIR_Assembler* ce, AccessPreBarrierStub* stub);
   void gen_load_reference_barrier_stub(LIR_Assembler* ce, ShenandoahLoadReferenceBarrierStub* stub);
   void generate_c1_pre_barrier_runtime_stub(StubAssembler* sasm);
   void generate_c1_load_reference_barrier_runtime_stub(StubAssembler* sasm);
+  void generate_access_pre_barrier_runtime_stub(StubAssembler* sasm);
 #endif
 
   void load_reference_barrier(MacroAssembler* masm, Register dst, Address src);
+  void access_pre_barrier(MacroAssembler* masm, Address oop, Register tmp1);
+  
 
   virtual void cmpxchg_oop(MacroAssembler* masm,
                            Register res, Address addr, Register oldval, Register newval,
                            bool exchange, Register tmp1, Register tmp2);
   virtual void arraycopy_prologue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                   Register src, Register dst, Register count);
+
+  // virtual void pre_barrier(MacroAssembler* masm, Register obj, Register tmp1);
   virtual void load_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                        Register dst, Address src, Register tmp1, Register tmp_thread);
   virtual void store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,

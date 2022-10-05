@@ -91,6 +91,8 @@ public:
   template <class T>
   inline oop load_reference_barrier_mutator(oop obj, T* load_addr);
 
+  inline void pre_barrier_mutator(oop obj, int compiler_id=0);
+
 private:
   template <class T>
   inline void arraycopy_marking(T* src, T* dst, size_t count);

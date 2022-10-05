@@ -916,6 +916,14 @@ void LIR_OpVisitState::visit(LIR_Op* op) {
       do_temp(opProfileType->_tmp);
       break;
     }
+    case lir_pre_barrier: {
+      assert(op->as_OpPreBarrier() != NULL, "must be");
+      LIR_OpPreBarrier* opPreBarrier = (LIR_OpPreBarrier*)op;
+      
+      assert(opPreBarrier->_base_oop->is_valid(), "used");       do_input(opPreBarrier->_base_oop);
+      assert(opPreBarrier->_tmp1->is_valid(), "used");           do_temp(opPreBarrier->_tmp1);
+      break;
+    }
   default:
     op->visit(this);
   }
@@ -991,6 +999,10 @@ void LIR_OpLabel::emit_code(LIR_Assembler* masm) {
 void LIR_OpArrayCopy::emit_code(LIR_Assembler* masm) {
   masm->emit_arraycopy(this);
   masm->append_code_stub(stub());
+}
+
+void LIR_OpPreBarrier::emit_code(LIR_Assembler* masm) {
+  masm->emit_pre_barrier(this);
 }
 
 void LIR_OpUpdateCRC32::emit_code(LIR_Assembler* masm) {
@@ -1317,6 +1329,10 @@ void LIR_List::allocate_array(LIR_Opr dst, LIR_Opr len, LIR_Opr t1,LIR_Opr t2, L
                            t4,
                            type,
                            stub));
+}
+
+void LIR_List::pre_barrier(LIR_Opr base_oop, LIR_Opr tmp1) {
+  append(new LIR_OpPreBarrier(base_oop, tmp1));
 }
 
 void LIR_List::shift_left(LIR_Opr value, LIR_Opr count, LIR_Opr dst, LIR_Opr tmp) {
@@ -1952,6 +1968,9 @@ void LIR_OpAllocArray::print_instr(outputStream* out) const {
   out->print("[label:" INTPTR_FORMAT "]", p2i(stub()->entry()));
 }
 
+void LIR_OpPreBarrier::print_instr(outputStream* out) const {
+
+}
 
 void LIR_OpTypeCheck::print_instr(outputStream* out) const {
   object()->print(out);                  out->print(" ");

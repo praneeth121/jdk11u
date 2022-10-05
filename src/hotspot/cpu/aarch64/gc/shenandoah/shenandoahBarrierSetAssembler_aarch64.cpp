@@ -43,6 +43,7 @@
 #define __ masm->
 
 address ShenandoahBarrierSetAssembler::_shenandoah_lrb = NULL;
+address ShenandoahBarrierSetAssembler::_pre_barrier = NULL;
 
 void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, DecoratorSet decorators, bool is_oop,
                                                        Register src, Register dst, Register count, RegSet saved_regs) {
@@ -709,6 +710,11 @@ address ShenandoahBarrierSetAssembler::shenandoah_lrb() {
   return _shenandoah_lrb;
 }
 
+address ShenandoahBarrierSetAssembler::pre_barrier() {
+  assert(_pre_barrier != NULL, "need pre barrier stub");
+  return _pre_barrier;
+}
+
 #define __ cgen->assembler()->
 
 // Shenandoah load reference barrier.
@@ -755,6 +761,29 @@ address ShenandoahBarrierSetAssembler::generate_shenandoah_lrb(StubCodeGenerator
   return start;
 }
 
+address ShenandoahBarrierSetAssembler::generate_pre_barrier(StubCodeGenerator* cgen) {
+  __ enter(); // required for proper stackwalking of RuntimeStub frame
+
+  __ push_call_clobbered_registers();
+
+  // if (UseCompressedOops) {
+  //   __ mov(lr, CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow));
+  // } else {
+  //   __ mov(lr, CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier));
+  // }
+  __ mov(lr, CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier));
+
+  __ blr(lr);
+  __ mov(rscratch1, r0);
+  __ pop_call_clobbered_registers();
+  __ mov(r0, rscratch1);
+
+  __ leave(); // required for proper stackwalking of RuntimeStub frame
+  __ ret(lr);
+
+  return start;
+}
+
 #undef __
 
 void ShenandoahBarrierSetAssembler::barrier_stubs_init() {
@@ -766,4 +795,11 @@ void ShenandoahBarrierSetAssembler::barrier_stubs_init() {
     StubCodeGenerator cgen(&buf);
     _shenandoah_lrb = generate_shenandoah_lrb(&cgen);
   }
+
+  // // create pre barrier code stub
+  // BufferBlob* bb_pb = BufferBlob::create("shenandoah_barrier_stubs", stub_code_size);
+  // CodeBuffer buf_pb(bb_pb);
+  // StubCodeGenerator cgen_pb(&buf_pb);
+  // _pre_barrier = generate_pre_barrier(&cgen_pb);
+
 }

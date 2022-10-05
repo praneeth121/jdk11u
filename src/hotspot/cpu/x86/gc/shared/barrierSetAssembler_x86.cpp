@@ -33,6 +33,11 @@
 
 address BarrierSetAssembler::_rdma_load_barrier = NULL;
 
+void BarrierSetAssembler::access_pre_barrier(MacroAssembler* masm, Address oop, Register tmp1) {
+  // do nothing for now
+  assert(false, "Should not reach here");
+}
+
 void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                   Register dst, Address src, Register tmp1, Register tmp_thread) {
   bool in_heap = (decorators & IN_HEAP) != 0;

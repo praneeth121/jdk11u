@@ -57,6 +57,20 @@ JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_narrow(oopDesc* src
   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
 JRT_END
 
+JRT_LEAF(void, ShenandoahRuntime::pre_barrier(oopDesc* obj))
+  ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 0);
+JRT_END
+
+JRT_LEAF(void, ShenandoahRuntime::pre_barrier_c1(oopDesc* obj))
+  // tty->print_cr("Prebarrier C1");
+  ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 1);
+JRT_END
+
+JRT_LEAF(void, ShenandoahRuntime::pre_barrier_c2(oopDesc* obj))
+  // tty->print_cr("Prebarrier C2");
+  ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 2);
+JRT_END
+
 // Shenandoah clone barrier: makes sure that references point to to-space
 // in cloned objects.
 JRT_LEAF(void, ShenandoahRuntime::shenandoah_clone_barrier(oopDesc* src))

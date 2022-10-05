@@ -32,6 +32,7 @@ class ShenandoahBarrierSetC2State : public ResourceObj {
 private:
   GrowableArray<ShenandoahIUBarrierNode*>* _iu_barriers;
   GrowableArray<ShenandoahLoadReferenceBarrierNode*>* _load_reference_barriers;
+  GrowableArray<AccessPreBarrierNode*>* _access_pre_barriers;
 
 public:
   ShenandoahBarrierSetC2State(Arena* comp_arena);
@@ -45,6 +46,11 @@ public:
   ShenandoahLoadReferenceBarrierNode* load_reference_barrier(int idx) const;
   void add_load_reference_barrier(ShenandoahLoadReferenceBarrierNode* n);
   void remove_load_reference_barrier(ShenandoahLoadReferenceBarrierNode * n);
+
+  int access_pre_barriers_count() const;
+  AccessPreBarrierNode* access_pre_barrier(int idx) const;
+  void add_access_pre_barrier(AccessPreBarrierNode* n);
+  void remove_access_pre_barrier(AccessPreBarrierNode* n);
 };
 
 class ShenandoahBarrierSetC2 : public BarrierSetC2 {
@@ -82,6 +88,7 @@ private:
 protected:
   virtual Node* load_at_resolved(C2Access& access, const Type* val_type) const;
   virtual Node* store_at_resolved(C2Access& access, C2AccessValue& val) const;
+  virtual Node* access_pre_barrier(GraphKit* kit, Node* oop) const;
   virtual Node* atomic_cmpxchg_val_at_resolved(C2AtomicAccess& access, Node* expected_val,
                                                Node* new_val, const Type* val_type) const;
   virtual Node* atomic_cmpxchg_bool_at_resolved(C2AtomicAccess& access, Node* expected_val,
@@ -93,6 +100,7 @@ public:
 
   static bool is_shenandoah_wb_pre_call(Node* call);
   static bool is_shenandoah_lrb_call(Node* call);
+  static bool is_access_pre_barrier_call(Node* call);
   static bool is_shenandoah_marking_if(PhaseTransform *phase, Node* n);
   static bool is_shenandoah_state_load(Node* n);
   static bool has_only_shenandoah_wb_pre_uses(Node* n);
@@ -102,6 +110,7 @@ public:
   static const TypeFunc* write_ref_field_pre_entry_Type();
   static const TypeFunc* shenandoah_clone_barrier_Type();
   static const TypeFunc* shenandoah_load_reference_barrier_Type();
+  static const TypeFunc* access_pre_barrier_Type();
   virtual bool has_load_barriers() const { return true; }
 
   // This is the entry-point for the backend to perform accesses through the Access API.

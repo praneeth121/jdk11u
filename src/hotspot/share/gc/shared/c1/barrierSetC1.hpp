@@ -130,6 +130,8 @@ public:
   virtual void load_at(LIRAccess& access, LIR_Opr result);
   virtual void load(LIRAccess& access, LIR_Opr result);
 
+  virtual void access_pre_barrier(LIRGenerator* gen, LIR_Opr oop);
+
   virtual LIR_Opr atomic_cmpxchg_at(LIRAccess& access, LIRItem& cmp_value, LIRItem& new_value);
 
   virtual LIR_Opr atomic_xchg_at(LIRAccess& access, LIRItem& value);

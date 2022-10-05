@@ -1598,11 +1598,17 @@ Node* GraphKit::access_store_at(Node* ctl,
     return top(); // Dead path ?
   }
 
+
   assert(val != NULL, "not dead path");
 
   C2AccessValuePtr addr(adr, adr_type);
   C2AccessValue value(val, val_type);
   C2Access access(this, decorators | C2_WRITE_ACCESS, bt, obj, addr);
+  // access pre barrier
+  if (UseShenandoahGC) {
+    // take in an object, spit out the exact same to use for load and store
+    _barrier_set->access_pre_barrier(this, obj);
+  }
   if (access.is_raw()) {
     return _barrier_set->BarrierSetC2::store_at(access, value);
   } else {
@@ -1618,6 +1624,12 @@ Node* GraphKit::access_load_at(Node* obj,   // containing obj
                                DecoratorSet decorators) {
   if (stopped()) {
     return top(); // Dead path ?
+  }
+
+  // access pre barrier
+  if (UseShenandoahGC) {
+    // take in an object, spit out the exact same to use for load and store
+    obj = _barrier_set->access_pre_barrier(this, obj);
   }
 
   C2AccessValuePtr addr(adr, adr_type);
