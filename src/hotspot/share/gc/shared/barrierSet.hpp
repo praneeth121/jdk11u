@@ -165,7 +165,6 @@ public:
   // 3) Provide specializations for BarrierSet::GetName and BarrierSet::GetType.
   template <DecoratorSet decorators, typename BarrierSetT>
   class AccessBarrier: protected RawAccessBarrier<decorators> {
-    // Dat TODO, intercept functions to handle remote access
   private:
     typedef RawAccessBarrier<decorators> Raw;
 

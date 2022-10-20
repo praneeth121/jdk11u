@@ -166,7 +166,7 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   // Compute address and memory type.
   int offset = field->offset_in_bytes();
   const TypePtr* adr_type = C->alias_type(field)->adr_type();
-  Node *adr = basic_plus_adr(obj, obj, offset);
+
 
   // Build the resultant type of the load
   const Type *type;
@@ -175,6 +175,8 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
 
   DecoratorSet decorators = IN_HEAP;
   decorators |= is_vol ? MO_SEQ_CST : MO_UNORDERED;
+
+  Node *adr = basic_plus_adr(obj, obj, offset);
 
   bool is_obj = bt == T_OBJECT || bt == T_ARRAY;
 
@@ -201,6 +203,10 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   }
 
   Node* ld = access_load_at(obj, adr, adr_type, type, bt, decorators);
+
+  if (UseShenandoahGC) {
+    access_pre_barrier(obj);
+  }
 
   // Adjust Java stack
   if (type2size[bt] == 1)
@@ -261,6 +267,10 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
     }
   }
   access_store_at(control(), obj, adr, adr_type, val, field_type, bt, decorators);
+
+  if (UseShenandoahGC) {
+    access_pre_barrier(obj);
+  }
 
   if (is_field) {
     // Remember we wrote a volatile field.
@@ -348,6 +358,9 @@ Node* Parse::expand_multianewarray(ciArrayKlass* array_klass, Node* *lengths, in
       intptr_t offset = header + ((intptr_t)i << LogBytesPerHeapOop);
       Node*    eaddr  = basic_plus_adr(array, offset);
       access_store_at(control(), array, eaddr, adr_type, elem, elemtype, T_OBJECT, IN_HEAP | IS_ARRAY);
+      if (UseShenandoahGC) {
+        access_pre_barrier(array);
+      }
     }
   }
   return array;

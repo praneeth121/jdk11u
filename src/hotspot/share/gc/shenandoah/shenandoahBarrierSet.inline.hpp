@@ -79,13 +79,13 @@ inline void ShenandoahBarrierSet::pre_barrier_mutator(oop obj, int compiler_id) 
     oop fwd = resolve_forwarded_not_null_mutator(obj);
     // tty->print_cr("oop is null");
     size_t ac = fwd->increase_access_counter();
-    if (compiler_id == 1) {
+    if (compiler_id == 2) {
       // debug
       // tty->print_cr("Prebarrier mutator %d: oop %p, size %d, ac %lu", compiler_id, (void*)fwd, fwd->size(), ac);
     }
   } else {
     if (!_heap->is_in((void*)obj)) {
-      tty->print_cr("comp %d: obj is not in heap", compiler_id);
+      // tty->print_cr("comp %d: obj is not in heap", compiler_id);
     }
     else if (!(void*)obj) {
       tty->print_cr("comp %d: oop is null", compiler_id);
@@ -93,6 +93,7 @@ inline void ShenandoahBarrierSet::pre_barrier_mutator(oop obj, int compiler_id) 
       tty->print_cr("comp %d: Unknown", compiler_id);
     }
   }
+  // return obj;
   // tty->print_cr("Prebarrier mutator:");
   // tty->print_cr("Prebarrier mutator: oop %p, size %d", (void*)obj, obj->size());
   

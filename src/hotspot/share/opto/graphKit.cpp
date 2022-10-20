@@ -1600,20 +1600,27 @@ Node* GraphKit::access_store_at(Node* ctl,
 
 
   assert(val != NULL, "not dead path");
+  Node* resolved_obj = obj;
+  // if (UseShenandoahGC) {
+  //   // take in an object, spit out the exact same to use for load and store
+  //   resolved_obj = _barrier_set->access_pre_barrier(this, obj);
+  // }
 
   C2AccessValuePtr addr(adr, adr_type);
   C2AccessValue value(val, val_type);
-  C2Access access(this, decorators | C2_WRITE_ACCESS, bt, obj, addr);
+  C2Access access(this, decorators | C2_WRITE_ACCESS, bt, resolved_obj, addr);
   // access pre barrier
-  if (UseShenandoahGC) {
-    // take in an object, spit out the exact same to use for load and store
-    _barrier_set->access_pre_barrier(this, obj);
-  }
+  Node* st = NULL;
   if (access.is_raw()) {
-    return _barrier_set->BarrierSetC2::store_at(access, value);
+    st = _barrier_set->BarrierSetC2::store_at(access, value);
   } else {
-    return _barrier_set->store_at(access, value);
+    st = _barrier_set->store_at(access, value);
   }
+  // if (UseShenandoahGC) {
+  //   access_pre_barrier(obj);
+  // }
+
+  return st;
 }
 
 Node* GraphKit::access_load_at(Node* obj,   // containing obj
@@ -1627,18 +1634,40 @@ Node* GraphKit::access_load_at(Node* obj,   // containing obj
   }
 
   // access pre barrier
-  if (UseShenandoahGC) {
-    // take in an object, spit out the exact same to use for load and store
-    obj = _barrier_set->access_pre_barrier(this, obj);
-  }
+  // if (UseShenandoahGC) {
+  //   // adr is the add node
+  //   tty->print_cr("Add node: ");
+  //   adr->dump(10);
+  //   assert(adr->Opcode() == Op_AddP, "Expected to be add node");
+  //   Node* call = _barrier_set->access_pre_barrier(this, obj);
+
+
+  //   adr->hash
+  //   adr->set_req(AddPNode::Base, call);
+  //   adr->set_req(AddPNode::Address, call);
+
+  // }
 
   C2AccessValuePtr addr(adr, adr_type);
   C2Access access(this, decorators | C2_READ_ACCESS, bt, obj, addr);
+  Node* ld = NULL;
   if (access.is_raw()) {
-    return _barrier_set->BarrierSetC2::load_at(access, val_type);
+    ld = _barrier_set->BarrierSetC2::load_at(access, val_type);
   } else {
-    return _barrier_set->load_at(access, val_type);
+    ld = _barrier_set->load_at(access, val_type);
   }
+
+  // ld->set_req()
+  // if (UseShenandoahGC) {
+  //   // take in an object, spit out the exact same to use for load and store
+  //   Node* barrier = _barrier_set->access_pre_barrier(this, obj);
+  //   ld->set_req()
+  // }
+
+  // if (UseShenandoahGC) {
+  //   access_pre_barrier(obj);
+  // }
+  return ld;
 }
 
 Node* GraphKit::access_load(Node* adr,   // actual adress to load val at
@@ -1656,6 +1685,18 @@ Node* GraphKit::access_load(Node* adr,   // actual adress to load val at
   } else {
     return _barrier_set->load_at(access, val_type);
   }
+}
+
+Node* GraphKit::access_pre_barrier(Node* obj) {
+  // if (stopped()) {
+  //   return top(); // Dead path ?
+  // }
+
+  // C2AccessValuePtr addr(obj, adr_type);
+  // C2Access access(this, decorators | C2_READ_ACCESS, bt, obj, addr);
+
+  // return call
+  return _barrier_set->access_pre_barrier(this, obj);
 }
 
 Node* GraphKit::access_atomic_cmpxchg_val_at(Node* ctl,

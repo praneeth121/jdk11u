@@ -629,6 +629,9 @@ void ConnectionGraph::add_node_to_connection_graph(Node *n, Unique_Node_List *de
       break;
     case Op_ShenandoahLoadReferenceBarrier:
       add_local_var_and_edge(n, PointsToNode::NoEscape, n->in(ShenandoahLoadReferenceBarrierNode::ValueIn), delayed_worklist);
+      break;
+    case Op_AccessPreBarrier:
+      add_local_var_and_edge(n, PointsToNode::NoEscape, n->in(AccessPreBarrierNode::ValueIn), delayed_worklist);
 #endif
     default:
       ; // Do nothing for nodes not related to EA.
@@ -862,6 +865,9 @@ void ConnectionGraph::add_final_edges(Node *n) {
       break;
     case Op_ShenandoahLoadReferenceBarrier:
       add_local_var_and_edge(n, PointsToNode::NoEscape, n->in(ShenandoahLoadReferenceBarrierNode::ValueIn), NULL);
+      break;
+    case Op_AccessPreBarrier:
+      add_local_var_and_edge(n, PointsToNode::NoEscape, n->in(AccessPreBarrierNode::ValueIn), NULL);
       break;
 #endif
     default: {
@@ -2435,7 +2441,7 @@ Node* ConnectionGraph::get_addp_base(Node *addp) {
              opcode == Op_CastX2P || uncast_base->is_DecodeNarrowPtr() ||
              (uncast_base->is_Mem() && (uncast_base->bottom_type()->isa_rawptr() != NULL)) ||
              (uncast_base->is_Proj() && uncast_base->in(0)->is_Allocate())
-             SHENANDOAHGC_ONLY(|| uncast_base->Opcode() == Op_ShenandoahLoadReferenceBarrier)
+             SHENANDOAHGC_ONLY(|| uncast_base->Opcode() == Op_ShenandoahLoadReferenceBarrier || uncast_base->Opcode() == Op_AccessPreBarrier)
              , "sanity");
     }
   }

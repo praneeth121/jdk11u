@@ -42,6 +42,7 @@
 #include "opto/subnode.hpp"
 
 bool ShenandoahBarrierC2Support::expand(Compile* C, PhaseIterGVN& igvn) {
+  // barrier expansion is here
   ShenandoahBarrierSetC2State* state = ShenandoahBarrierSetC2::bsc2()->state();
   if ((state->iu_barriers_count() +
        state->load_reference_barriers_count()) > 0) {
@@ -1045,8 +1046,8 @@ void ShenandoahBarrierC2Support::call_lrb_stub(Node*& ctrl, Node*& val, Node* lo
   phase->register_new_node(mm, ctrl);
 
   address target = LP64_ONLY(UseCompressedOops) NOT_LP64(false) ?
-          CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow) :
-          CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier);
+          CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow_c2) :
+          CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_c2);
 
   Node* call = new CallLeafNode(ShenandoahBarrierSetC2::shenandoah_load_reference_barrier_Type(),
                                 target,
@@ -1069,38 +1070,45 @@ void ShenandoahBarrierC2Support::call_lrb_stub(Node*& ctrl, Node*& val, Node* lo
   phase->register_new_node(val, ctrl);
 }
 
-// void ShenandoahBarrierC2Support::call_access_pre_barrier_stub(Node*& ctrl, Node*& val, Node* load_addr, Node*& result_mem, Node* raw_mem, bool is_native, PhaseIdealLoop* phase) {
-//   Node* base = find_bottom_mem(ctrl, phase);
-//   MergeMemNode* mm = MergeMemNode::make(base);
-//   mm->set_memory_at(Compile::AliasIdxRaw, raw_mem);
-//   phase->register_new_node(mm, ctrl);
+void ShenandoahBarrierC2Support::call_access_pre_barrier_stub(Node*& ctrl, Node*& val, Node*& result_mem, Node* raw_mem, PhaseIdealLoop* phase) {
 
-//   address target = CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier);
 
-//   Node* call = new CallLeafNode(ShenandoahBarrierSetC2::access_pre_barrier_Type(),
-//                                 target,
-//                                 "access pre barrier", TypeRawPtr::BOTTOM);
+  IdealLoopTree*loop = phase->get_loop(ctrl);
+  const TypePtr* obj_type = phase->igvn().type(val)->is_oopptr();
+
+
+  Node* base = find_bottom_mem(ctrl, phase);
+  MergeMemNode* mm = MergeMemNode::make(base);
+  mm->set_memory_at(Compile::AliasIdxRaw, raw_mem);
+  phase->register_new_node(mm, ctrl);
+
+  address target = CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c2);
+
+  Node* call = new CallLeafNode(ShenandoahBarrierSetC2::access_pre_barrier_Type(),
+                                target,
+                                "access_pre_barrier", TypeRawPtr::BOTTOM);
                         
-//   call->init_req(TypeFunc::Control, ctrl);
-//   call->init_req(TypeFunc::I_O, phase->C->top());
-//   call->init_req(TypeFunc::Memory, mm);
-//   call->init_req(TypeFunc::FramePtr, phase->C->top());
-//   call->init_req(TypeFunc::ReturnAdr, phase->C->top());
-//   call->init_req(TypeFunc::Parms, val);
-//   phase->register_control(call, loop, ctrl); // call becomes new ctrl
-//   ctrl = new ProjNode(call, TypeFunc::Control);
-//   phase->register_control(ctrl, loop, call);
-//   result_mem = new ProjNode(call, TypeFunc::Memory);
-//   phase->register_new_node(result_mem, call);
-//   val = new ProjNode(call, TypeFunc::Parms);
-//   phase->register_new_node(val, call);
-//   val = new CheckCastPPNode(ctrl, val, obj_type);
-//   phase->register_new_node(val, ctrl);
+  call->init_req(TypeFunc::Control, ctrl);
+  call->init_req(TypeFunc::I_O, phase->C->top());
+  call->init_req(TypeFunc::Memory, mm);
+  call->init_req(TypeFunc::FramePtr, phase->C->top());
+  call->init_req(TypeFunc::ReturnAdr, phase->C->top());
+  call->init_req(TypeFunc::Parms, val);
+  phase->register_control(call, loop, ctrl); // call becomes new ctrl
+  ctrl = new ProjNode(call, TypeFunc::Control);
+  phase->register_control(ctrl, loop, call); // call proj becomes new ctrl
 
-  
+  result_mem = new ProjNode(call, TypeFunc::Memory);
+  phase->register_new_node(result_mem, call);
 
-//   // missing impl
-// }
+  val = new ProjNode(call, TypeFunc::Parms);
+  phase->register_new_node(val, call);
+
+  val = new CheckCastPPNode(ctrl, val, obj_type);
+  phase->register_new_node(val, ctrl);
+
+  // val is now projection of call, to be replace barrier node
+}
 
 void ShenandoahBarrierC2Support::fix_ctrl(Node* barrier, Node* region, const MemoryGraphFixer& fixer, Unique_Node_List& uses, Unique_Node_List& uses_to_ignore, uint last, PhaseIdealLoop* phase) {
   Node* ctrl = phase->get_ctrl(barrier);
@@ -1180,7 +1188,7 @@ static Node* create_phis_on_call_return(Node* ctrl, Node* c, Node* n, Node* n_cl
 }
 
 void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
-  // dat todo add access counter code here
+  // dat todo add access counter IR here
 
   ShenandoahBarrierSetC2State* state = ShenandoahBarrierSetC2::bsc2()->state();
 
@@ -1202,6 +1210,7 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
   Node_Stack stack(0);
   Node_List clones;
   for (int i = state->load_reference_barriers_count() - 1; i >= 0; i--) {
+    // tty->print_cr(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Prepping for lrb");
     ShenandoahLoadReferenceBarrierNode* lrb = state->load_reference_barrier(i);
     if (lrb->is_redundant()) {
       continue;
@@ -1477,6 +1486,284 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
     }
   }
 
+  // -------------------------------------------------
+
+  stack.clear();
+  clones.clear();
+  for (int i = state->access_pre_barriers_count() - 1; i >= 0; i--) {
+    tty->print_cr(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Prepping for pre barrier");
+    AccessPreBarrierNode* lrb = state->access_pre_barrier(i);
+    if (lrb->is_redundant()) {
+      continue;
+    }
+
+    Node* ctrl = phase->get_ctrl(lrb);
+    Node* val = lrb->in(AccessPreBarrierNode::ValueIn);
+
+    CallStaticJavaNode* unc = NULL;
+    Node* unc_ctrl = NULL;
+    Node* uncasted_val = val;
+
+    for (DUIterator_Fast imax, i = lrb->fast_outs(imax); i < imax; i++) {
+      Node* u = lrb->fast_out(i);
+      if (u->Opcode() == Op_CastPP &&
+          u->in(0) != NULL &&
+          phase->is_dominator(u->in(0), ctrl)) {
+        const Type* u_t = phase->igvn().type(u);
+
+        if (u_t->meet(TypePtr::NULL_PTR) != u_t &&
+            u->in(0)->Opcode() == Op_IfTrue &&
+            u->in(0)->as_Proj()->is_uncommon_trap_if_pattern(Deoptimization::Reason_none) &&
+            u->in(0)->in(0)->is_If() &&
+            u->in(0)->in(0)->in(1)->Opcode() == Op_Bool &&
+            u->in(0)->in(0)->in(1)->as_Bool()->_test._test == BoolTest::ne &&
+            u->in(0)->in(0)->in(1)->in(1)->Opcode() == Op_CmpP &&
+            u->in(0)->in(0)->in(1)->in(1)->in(1) == val &&
+            u->in(0)->in(0)->in(1)->in(1)->in(2)->bottom_type() == TypePtr::NULL_PTR) {
+          IdealLoopTree* loop = phase->get_loop(ctrl);
+          IdealLoopTree* unc_loop = phase->get_loop(u->in(0));
+
+          if (!unc_loop->is_member(loop)) {
+            continue;
+          }
+
+          Node* branch = no_branches(ctrl, u->in(0), false, phase);
+          assert(branch == NULL || branch == NodeSentinel, "was not looking for a branch");
+          if (branch == NodeSentinel) {
+            continue;
+          }
+
+          phase->igvn().replace_input_of(u, 1, val);
+          phase->igvn().replace_input_of(lrb, AccessPreBarrierNode::ValueIn, u);
+          phase->set_ctrl(u, u->in(0));
+          phase->set_ctrl(lrb, u->in(0));
+          unc = u->in(0)->as_Proj()->is_uncommon_trap_if_pattern(Deoptimization::Reason_none);
+          unc_ctrl = u->in(0);
+          val = u;
+
+          for (DUIterator_Fast jmax, j = val->fast_outs(jmax); j < jmax; j++) {
+            Node* u = val->fast_out(j);
+            if (u == lrb) continue;
+            phase->igvn().rehash_node_delayed(u);
+            int nb = u->replace_edge(val, lrb);
+            --j; jmax -= nb;
+          }
+
+          RegionNode* r = new RegionNode(3);
+          IfNode* iff = unc_ctrl->in(0)->as_If();
+
+          Node* ctrl_use = unc_ctrl->unique_ctrl_out();
+          Node* unc_ctrl_clone = unc_ctrl->clone();
+          phase->register_control(unc_ctrl_clone, loop, iff);
+          Node* c = unc_ctrl_clone;
+          Node* new_cast = clone_null_check(c, val, unc_ctrl_clone, phase);
+          r->init_req(1, new_cast->in(0)->in(0)->as_If()->proj_out(0));
+
+          phase->igvn().replace_input_of(unc_ctrl, 0, c->in(0));
+          phase->set_idom(unc_ctrl, c->in(0), phase->dom_depth(unc_ctrl));
+          phase->lazy_replace(c, unc_ctrl);
+          c = NULL;;
+          phase->igvn().replace_input_of(val, 0, unc_ctrl_clone);
+          phase->set_ctrl(val, unc_ctrl_clone);
+
+          IfNode* new_iff = new_cast->in(0)->in(0)->as_If();
+          fix_null_check(unc, unc_ctrl_clone, r, uses, phase);
+          Node* iff_proj = iff->proj_out(0);
+          r->init_req(2, iff_proj);
+          phase->register_control(r, phase->ltree_root(), iff);
+
+          Node* new_bol = new_iff->in(1)->clone();
+          Node* new_cmp = new_bol->in(1)->clone();
+          assert(new_cmp->Opcode() == Op_CmpP, "broken");
+          assert(new_cmp->in(1) == val->in(1), "broken");
+          new_bol->set_req(1, new_cmp);
+          new_cmp->set_req(1, lrb);
+          phase->register_new_node(new_bol, new_iff->in(0));
+          phase->register_new_node(new_cmp, new_iff->in(0));
+          phase->igvn().replace_input_of(new_iff, 1, new_bol);
+          phase->igvn().replace_input_of(new_cast, 1, lrb);
+
+          for (DUIterator_Fast imax, i = lrb->fast_outs(imax); i < imax; i++) {
+            Node* u = lrb->fast_out(i);
+            if (u == new_cast || u == new_cmp) {
+              continue;
+            }
+            phase->igvn().rehash_node_delayed(u);
+            int nb = u->replace_edge(lrb, new_cast);
+            assert(nb > 0, "no update?");
+            --i; imax -= nb;
+          }
+
+          for (DUIterator_Fast imax, i = val->fast_outs(imax); i < imax; i++) {
+            Node* u = val->fast_out(i);
+            if (u == lrb) {
+              continue;
+            }
+            phase->igvn().rehash_node_delayed(u);
+            int nb = u->replace_edge(val, new_cast);
+            assert(nb > 0, "no update?");
+            --i; imax -= nb;
+          }
+
+          ctrl = unc_ctrl_clone;
+          phase->set_ctrl_and_loop(lrb, ctrl);
+          break;
+        }
+      }
+    }
+    if ((ctrl->is_Proj() && ctrl->in(0)->is_CallJava()) || ctrl->is_CallJava()) {
+      CallNode* call = ctrl->is_Proj() ? ctrl->in(0)->as_CallJava() : ctrl->as_CallJava();
+      if (call->entry_point() == OptoRuntime::rethrow_stub()) {
+        // The rethrow call may have too many projections to be
+        // properly handled here. Given there's no reason for a
+        // barrier to depend on the call, move it above the call
+        stack.push(lrb, 0);
+        do {
+          Node* n = stack.node();
+          uint idx = stack.index();
+          if (idx < n->req()) {
+            Node* in = n->in(idx);
+            stack.set_index(idx+1);
+            if (in != NULL) {
+              if (phase->has_ctrl(in)) {
+                if (phase->is_dominator(call, phase->get_ctrl(in))) {
+#ifdef ASSERT
+                  for (uint i = 0; i < stack.size(); i++) {
+                    assert(stack.node_at(i) != in, "node shouldn't have been seen yet");
+                  }
+#endif
+                  stack.push(in, 0);
+                }
+              } else {
+                assert(phase->is_dominator(in, call->in(0)), "no dependency on the call");
+              }
+            }
+          } else {
+            phase->set_ctrl(n, call->in(0));
+            stack.pop();
+          }
+        } while(stack.size() > 0);
+        continue;
+      }
+      CallProjections projs;
+      call->extract_projections(&projs, false, false);
+
+#ifdef ASSERT
+      VectorSet cloned(Thread::current()->resource_area());
+#endif
+      Node* lrb_clone = lrb->clone();
+      phase->register_new_node(lrb_clone, projs.catchall_catchproj);
+      phase->set_ctrl(lrb, projs.fallthrough_catchproj);
+
+      stack.push(lrb, 0);
+      clones.push(lrb_clone);
+
+      do {
+        assert(stack.size() == clones.size(), "");
+        Node* n = stack.node();
+#ifdef ASSERT
+        if (n->is_Load()) {
+          Node* mem = n->in(MemNode::Memory);
+          for (DUIterator_Fast jmax, j = mem->fast_outs(jmax); j < jmax; j++) {
+            Node* u = mem->fast_out(j);
+            assert(!u->is_Store() || !u->is_LoadStore() || phase->get_ctrl(u) != ctrl, "anti dependent store?");
+          }
+        }
+#endif
+        uint idx = stack.index();
+        Node* n_clone = clones.at(clones.size()-1);
+        if (idx < n->outcnt()) {
+          Node* u = n->raw_out(idx);
+          Node* c = phase->ctrl_or_self(u);
+          if (phase->is_dominator(call, c) && phase->is_dominator(c, projs.fallthrough_proj)) {
+            stack.set_index(idx+1);
+            assert(!u->is_CFG(), "");
+            stack.push(u, 0);
+            assert(!cloned.test_set(u->_idx), "only one clone");
+            Node* u_clone = u->clone();
+            int nb = u_clone->replace_edge(n, n_clone);
+            assert(nb > 0, "should have replaced some uses");
+            phase->register_new_node(u_clone, projs.catchall_catchproj);
+            clones.push(u_clone);
+            phase->set_ctrl(u, projs.fallthrough_catchproj);
+          } else {
+            bool replaced = false;
+            if (u->is_Phi()) {
+              for (uint k = 1; k < u->req(); k++) {
+                if (u->in(k) == n) {
+                  if (phase->is_dominator(projs.catchall_catchproj, u->in(0)->in(k))) {
+                    phase->igvn().replace_input_of(u, k, n_clone);
+                    replaced = true;
+                  } else if (!phase->is_dominator(projs.fallthrough_catchproj, u->in(0)->in(k))) {
+                    phase->igvn().replace_input_of(u, k, create_phis_on_call_return(ctrl, u->in(0)->in(k), n, n_clone, projs, phase));
+                    replaced = true;
+                  }
+                }
+              }
+            } else {
+              if (phase->is_dominator(projs.catchall_catchproj, c)) {
+                phase->igvn().rehash_node_delayed(u);
+                int nb = u->replace_edge(n, n_clone);
+                assert(nb > 0, "should have replaced some uses");
+                replaced = true;
+              } else if (!phase->is_dominator(projs.fallthrough_catchproj, c)) {
+                if (u->is_If()) {
+                  // Can't break If/Bool/Cmp chain
+                  assert(n->is_Bool(), "unexpected If shape");
+                  assert(stack.node_at(stack.size()-2)->is_Cmp(), "unexpected If shape");
+                  assert(n_clone->is_Bool(), "unexpected clone");
+                  assert(clones.at(clones.size()-2)->is_Cmp(), "unexpected clone");
+                  Node* bol_clone = n->clone();
+                  Node* cmp_clone = stack.node_at(stack.size()-2)->clone();
+                  bol_clone->set_req(1, cmp_clone);
+
+                  Node* nn = stack.node_at(stack.size()-3);
+                  Node* nn_clone = clones.at(clones.size()-3);
+                  assert(nn->Opcode() == nn_clone->Opcode(), "mismatch");
+
+                  int nb = cmp_clone->replace_edge(nn, create_phis_on_call_return(ctrl, c, nn, nn_clone, projs, phase));
+                  assert(nb > 0, "should have replaced some uses");
+
+                  phase->register_new_node(bol_clone, u->in(0));
+                  phase->register_new_node(cmp_clone, u->in(0));
+
+                  phase->igvn().replace_input_of(u, 1, bol_clone);
+
+                } else {
+                  phase->igvn().rehash_node_delayed(u);
+                  int nb = u->replace_edge(n, create_phis_on_call_return(ctrl, c, n, n_clone, projs, phase));
+                  assert(nb > 0, "should have replaced some uses");
+                }
+                replaced = true;
+              }
+            }
+            if (!replaced) {
+              stack.set_index(idx+1);
+            }
+          }
+        } else {
+          stack.pop();
+          clones.pop();
+        }
+      } while (stack.size() > 0);
+      assert(stack.size() == 0 && clones.size() == 0, "");
+    }
+  }
+
+  for (int i = 0; i < state->access_pre_barriers_count(); i++) {
+    Node* barrier = state->access_pre_barrier(i);
+    Node* ctrl = phase->get_ctrl(barrier);
+    IdealLoopTree* loop = phase->get_loop(ctrl);
+    Node* head = loop->head();
+    if (head->is_OuterStripMinedLoop()) {
+      // Expanding a barrier here will break loop strip mining
+      // verification. Transform the loop so the loop nest doesn't
+      // appear as strip mined.
+      OuterStripMinedLoopNode* outer = head->as_OuterStripMinedLoop();
+      hide_strip_mined_loop(outer, outer->unique_ctrl_out()->as_CountedLoop(), phase);
+    }
+  }
+
   // Expand load-reference-barriers
   MemoryGraphFixer fixer(Compile::AliasIdxRaw, true, phase);
   Unique_Node_List uses_to_ignore;
@@ -1658,33 +1945,7 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
   assert(ShenandoahBarrierSetC2::bsc2()->state()->load_reference_barriers_count() == 0, "all load reference barrier nodes should have been replaced");
 
 
-  // expanding the access_pre_barrier
-  // for (int i = state->access_pre_barriers_count() -1; i >= 0; i--) {
-  //   AccessPreBarrierNode* apb = state->access_pre_barrier(i);
-
-  //   Node* ctrl = phase->get_ctrl(lrb);
-  //   Node* val = lrb->in(AccessPreBarrierNode::ValueIn);
-
-  //   Node* orig_ctrl = ctrl;
-
-  //   Node* raw_mem = fixer.find_mem(ctrl, lrb);
-  //   Node* init_raw_mem = raw_mem;
-  //   Node* raw_mem_for_ctrl = fixer.find_mem(ctrl, NULL);
-
-  //   IdealLoopTree *loop = phase->get_loop(ctrl);
-  //   CallStaticJavaNode* unc = lrb->pin_and_expand_null_check(phase->igvn());
-  //   Node* unc_ctrl = NULL;
-  //   if (unc != NULL) {
-  //     if (val->in(ShenandoahLoadReferenceBarrierNode::Control) != ctrl) {
-  //       unc = NULL;
-  //     } else {
-  //       unc_ctrl = val->in(ShenandoahLoadReferenceBarrierNode::Control);
-  //     }
-  //   }
-
-
-
-  // }
+  
   // start expanding IU barrier
   for (int i = state->iu_barriers_count() - 1; i >= 0; i--) {
     Node* barrier = state->iu_barrier(i);
@@ -1794,7 +2055,7 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
     mm->set_memory_at(Compile::AliasIdxRaw, raw_mem);
     phase->register_new_node(mm, ctrl);
 
-    Node* call = new CallLeafNode(ShenandoahBarrierSetC2::write_ref_field_pre_entry_Type(), CAST_FROM_FN_PTR(address, ShenandoahRuntime::write_ref_field_pre_entry), "shenandoah_wb_pre", TypeRawPtr::BOTTOM);
+    Node* call = new CallLeafNode(ShenandoahBarrierSetC2::write_ref_field_pre_entry_Type(), CAST_FROM_FN_PTR(address, ShenandoahRuntime::write_ref_field_pre_entry_c2), "shenandoah_wb_pre", TypeRawPtr::BOTTOM);
     call->init_req(TypeFunc::Control, ctrl);
     call->init_req(TypeFunc::I_O, phase->C->top());
     call->init_req(TypeFunc::Memory, mm);
@@ -1836,6 +2097,193 @@ void ShenandoahBarrierC2Support::pin_and_expand(PhaseIdealLoop* phase) {
   }
   assert(state->iu_barriers_count() == 0, "all enqueue barrier nodes should have been replaced");
   // done expanding IU barrier
+
+
+  // expanding the access_pre_barrier
+  for (int i = state->access_pre_barriers_count() -1; i >= 0; i--) {
+    tty->print_cr(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Expanding pre barrier");
+    AccessPreBarrierNode* lrb = state->access_pre_barrier(i);
+    if (lrb->is_redundant()) {
+      phase->igvn().replace_node(lrb, lrb->in(AccessPreBarrierNode::ValueIn));
+      continue;
+    }
+    uint last = phase->C->unique();
+    Node* ctrl = phase->get_ctrl(lrb);
+    tty->print_cr("Ctrl 1: ");
+    lrb->dump(10);
+    Node* val = lrb->in(AccessPreBarrierNode::ValueIn);
+
+
+    Node* orig_ctrl = ctrl;
+
+    Node* raw_mem = fixer.find_mem(ctrl, lrb);
+    Node* init_raw_mem = raw_mem;
+    Node* raw_mem_for_ctrl = fixer.find_mem(ctrl, NULL);
+
+    IdealLoopTree *loop = phase->get_loop(ctrl);
+    // CallStaticJavaNode* unc = lrb->pin_and_expand_null_check(phase->igvn());
+    // Node* unc_ctrl = NULL;
+    // if (unc != NULL) {
+    //   if (val->in(AccessPreBarrierNode::Control) != ctrl) {
+    //     unc = NULL;
+    //   } else {
+    //     unc_ctrl = val->in(AccessPreBarrierNode::Control);
+    //   }
+    // }
+
+    Node* uncasted_val = val;
+    // if (unc != NULL) {
+    //   uncasted_val = val->in(1);
+    // }
+
+    Node* heap_stable_ctrl = NULL;
+    Node* null_ctrl = NULL;
+
+    assert(val->bottom_type()->make_oopptr(), "need oop");
+    assert(val->bottom_type()->make_oopptr()->const_oop() == NULL, "expect non-constant");
+
+    // enum { _heap_stable = 1, PATH_LIMIT };
+    // Node* region = new RegionNode(PATH_LIMIT);
+    // Node* val_phi = new PhiNode(region, uncasted_val->bottom_type()->is_oopptr());
+    // Node* raw_mem_phi = PhiNode::make(region, raw_mem, Type::MEMORY, TypeRawPtr::BOTTOM);
+
+    // // Stable path.
+    // test_gc_state(ctrl, raw_mem, heap_stable_ctrl, phase, ShenandoahHeap::HAS_FORWARDED);
+    // IfNode* heap_stable_iff = heap_stable_ctrl->in(0)->as_If();
+
+    // // Heap stable case
+    // region->init_req(_heap_stable, heap_stable_ctrl);
+    // val_phi->init_req(_heap_stable, uncasted_val);
+    // raw_mem_phi->init_req(_heap_stable, raw_mem);
+
+    // Node* reg2_ctrl = NULL;
+    // // Null case
+    // test_null(ctrl, val, null_ctrl, phase);
+    // if (null_ctrl != NULL) {
+    //   reg2_ctrl = null_ctrl->in(0);
+    //   region->init_req(_null_path, null_ctrl);
+    //   val_phi->init_req(_null_path, uncasted_val);
+    //   raw_mem_phi->init_req(_null_path, raw_mem);
+    // } else {
+    //   region->del_req(_null_path);
+    //   val_phi->del_req(_null_path);
+    //   raw_mem_phi->del_req(_null_path);
+    // }
+
+    // // Test for in-cset.
+    // // Wires !in_cset(obj) to slot 2 of region and phis
+    // Node* not_cset_ctrl = NULL;
+    // test_in_cset(ctrl, not_cset_ctrl, uncasted_val, raw_mem, phase);
+    // if (not_cset_ctrl != NULL) {
+    //   if (reg2_ctrl == NULL) reg2_ctrl = not_cset_ctrl->in(0);
+    //   region->init_req(_not_cset, not_cset_ctrl);
+    //   val_phi->init_req(_not_cset, uncasted_val);
+    //   raw_mem_phi->init_req(_not_cset, raw_mem);
+    // }
+
+    // // Resolve object when orig-value is in cset.
+    // // Make the unconditional resolve for fwdptr.
+    // Node* new_val = uncasted_val;
+    // if (unc_ctrl != NULL) {
+    //   // Clone the null check in this branch to allow implicit null check
+    //   new_val = clone_null_check(ctrl, val, unc_ctrl, phase);
+    //   fix_null_check(unc, unc_ctrl, ctrl->in(0)->as_If()->proj_out(0), uses, phase);
+
+    //   IfNode* iff = unc_ctrl->in(0)->as_If();
+    //   phase->igvn().replace_input_of(iff, 1, phase->igvn().intcon(1));
+    // }
+
+    // Call lrb-stub and wire up that path in slots 4
+    Node* result_mem = NULL;
+
+    Node* fwd = val;
+    Node* addr;
+    if (ShenandoahSelfFixing) {
+      VectorSet visited(Thread::current()->resource_area());
+      addr = get_load_addr(phase, visited, lrb);
+    } else {
+      addr = phase->igvn().zerocon(T_OBJECT);
+    }
+    if (addr->Opcode() == Op_AddP) {
+      Node* orig_base = addr->in(AddPNode::Base);
+      Node* base = new CheckCastPPNode(ctrl, orig_base, orig_base->bottom_type(), true);
+      phase->register_new_node(base, ctrl);
+      if (addr->in(AddPNode::Base) == addr->in((AddPNode::Address))) {
+        // Field access
+        addr = addr->clone();
+        addr->set_req(AddPNode::Base, base);
+        addr->set_req(AddPNode::Address, base);
+        phase->register_new_node(addr, ctrl);
+      } else {
+        Node* addr2 = addr->in(AddPNode::Address);
+        if (addr2->Opcode() == Op_AddP && addr2->in(AddPNode::Base) == addr2->in(AddPNode::Address) &&
+              addr2->in(AddPNode::Base) == orig_base) {
+          addr2 = addr2->clone();
+          addr2->set_req(AddPNode::Base, base);
+          addr2->set_req(AddPNode::Address, base);
+          phase->register_new_node(addr2, ctrl);
+          addr = addr->clone();
+          addr->set_req(AddPNode::Base, base);
+          addr->set_req(AddPNode::Address, addr2);
+          phase->register_new_node(addr, ctrl);
+        }
+      }
+    }
+    call_access_pre_barrier_stub(ctrl, fwd, result_mem, raw_mem, phase);
+    // region->init_req(1, ctrl);
+    // val_phi->init_req(1, fwd);
+    // raw_mem_phi->init_req(1, result_mem);
+
+    // phase->register_control(region, loop, ctrl);
+    // Node* out_val = val_phi;
+    // phase->register_new_node(val_phi, region);
+    // phase->register_new_node(raw_mem_phi, region);
+
+    // fix_ctrl(lrb, region, fixer, uses, uses_to_ignore, last, phase);
+
+    ctrl = orig_ctrl;
+
+    // if (unc != NULL) {
+      // for (DUIterator_Fast imax, i = val->fast_outs(imax); i < imax; i++) {
+      //   Node* u = val->fast_out(i);
+      //   Node* c = phase->ctrl_or_self(u);
+      //   if (u != lrb && (c != ctrl || is_dominator_same_ctrl(c, lrb, u, phase))) {
+      //     phase->igvn().rehash_node_delayed(u);
+      //     int nb = u->replace_edge(val, out_val);
+      //     --i, imax -= nb;
+      //   }
+      // }
+      // if (val->outcnt() == 0) {
+      //   phase->igvn()._worklist.push(val);
+      // }
+    // }
+    phase->igvn().replace_node(lrb, val);
+
+    // follow_barrier_uses(val, ctrl, uses, phase);
+
+    // for(uint next = 0; next < uses.size(); next++ ) {
+    //   Node *n = uses.at(next);
+    //   assert(phase->get_ctrl(n) == ctrl, "bad control");
+    //   assert(n != init_raw_mem, "should leave input raw mem above the barrier");
+    //   phase->set_ctrl(n, region);
+    //   follow_barrier_uses(n, ctrl, uses, phase);
+    // }
+
+    // The slow path call produces memory: hook the raw memory phi
+    // from the expanded load reference barrier with the rest of the graph
+    // which may require adding memory phis at every post dominated
+    // region and at enclosing loop heads. Use the memory state
+    // collected in memory_nodes to fix the memory graph. Update that
+    // memory state as we go.
+    // fixer.fix_mem(ctrl, region, init_raw_mem, raw_mem_for_ctrl, raw_mem_phi, uses);
+
+    // Node* result_mem = NULL;
+    // call_access_pre_barrier_stub(ctrl, val, result_mem, raw_mem, phase);
+    // phase->igvn().replace_node(barrier, val);
+
+    // follow_barrier_uses(out_val, ctrl, uses, phase);
+  }
+  assert(state->access_pre_barriers_count() == 0, "all enqueue barrier nodes should have been replaced");
 }
 
 Node* ShenandoahBarrierC2Support::get_load_addr(PhaseIdealLoop* phase, VectorSet& visited, Node* in) {
@@ -1890,6 +2338,8 @@ Node* ShenandoahBarrierC2Support::get_load_addr(PhaseIdealLoop* phase, VectorSet
       return get_load_addr(phase, visited, in->in(ShenandoahLoadReferenceBarrierNode::ValueIn));
     case Op_ShenandoahIUBarrier:
       return get_load_addr(phase, visited, in->in(1));
+    case Op_AccessPreBarrier:
+      return get_load_addr(phase, visited, in->in(AccessPreBarrierNode::ValueIn));
     case Op_CallDynamicJava:
     case Op_CallLeaf:
     case Op_CallStaticJava:
@@ -3420,6 +3870,7 @@ bool ShenandoahLoadReferenceBarrierNode::is_redundant() {
       case Op_CMoveP:
       case Op_Phi:
       case Op_ShenandoahLoadReferenceBarrier:
+      case Op_AccessPreBarrier:
         // Whether or not these need the barriers depends on their users
         visit_users = true;
         break;
@@ -3471,8 +3922,317 @@ CallStaticJavaNode* ShenandoahLoadReferenceBarrierNode::pin_and_expand_null_chec
   return NULL;
 }
 
-// ------------------------------- LRB --------------------------------
+// ------------------------------- Prebarrier --------------------------------
 AccessPreBarrierNode::AccessPreBarrierNode(Node* ctrl, Node* obj)
 : Node(ctrl, obj) {
   ShenandoahBarrierSetC2::bsc2()->state()->add_access_pre_barrier(this);
+  assert(Opcode()==Op_AccessPreBarrier, "sanity");
+}
+
+
+const Type* AccessPreBarrierNode::bottom_type() const {
+  if (in(ValueIn) == NULL || in(ValueIn)->is_top()) {
+    return Type::TOP;
+  }
+  const Type* t = in(ValueIn)->bottom_type();
+  if (t == TypePtr::NULL_PTR) {
+    return t;
+  }
+  return t->is_oopptr();
+}
+
+const Type* AccessPreBarrierNode::Value(PhaseGVN* phase) const {
+  // Either input is TOP ==> the result is TOP
+  const Type *t2 = phase->type(in(ValueIn));
+  if( t2 == Type::TOP ) return Type::TOP;
+
+  if (t2 == TypePtr::NULL_PTR) {
+    return t2;
+  }
+
+  const Type* type = t2->is_oopptr();
+  return type;
+}
+
+Node* AccessPreBarrierNode::Identity(PhaseGVN* phase) {
+  Node* value = in(ValueIn);
+  if (!needs_barrier(phase, value)) {
+    return value;
+  }
+  return this;
+}
+
+bool AccessPreBarrierNode::needs_barrier(PhaseGVN* phase, Node* n) {
+  Unique_Node_List visited;
+  return needs_barrier_impl(phase, n, visited);
+}
+
+bool AccessPreBarrierNode::needs_barrier_impl(PhaseGVN* phase, Node* n, Unique_Node_List &visited) {
+  if (n == NULL) return false;
+  if (visited.member(n)) {
+    return false; // Been there.
+  }
+  visited.push(n);
+
+  if (n->is_Allocate()) {
+    // tty->print_cr("optimize barrier on alloc");
+    return false;
+  }
+  if (n->is_Call()) {
+    // tty->print_cr("optimize barrier on call");
+    return false;
+  }
+
+  const Type* type = phase->type(n);
+  if (type == Type::TOP) {
+    return false;
+  }
+  if (type->make_ptr()->higher_equal(TypePtr::NULL_PTR)) {
+    // tty->print_cr("optimize barrier on null");
+    return false;
+  }
+  if (type->make_oopptr() && type->make_oopptr()->const_oop() != NULL) {
+    // tty->print_cr("optimize barrier on constant");
+    return false;
+  }
+
+  switch (n->Opcode()) {
+    case Op_AddP:
+      return true; // TODO: Can refine?
+    case Op_LoadP:
+    case Op_ShenandoahCompareAndExchangeN:
+    case Op_ShenandoahCompareAndExchangeP:
+    case Op_CompareAndExchangeN:
+    case Op_CompareAndExchangeP:
+    case Op_GetAndSetN:
+    case Op_GetAndSetP:
+      return true;
+    case Op_Phi: {
+      for (uint i = 1; i < n->req(); i++) {
+        if (needs_barrier_impl(phase, n->in(i), visited)) return true;
+      }
+      return false;
+    }
+    case Op_CheckCastPP:
+    case Op_CastPP:
+      return needs_barrier_impl(phase, n->in(1), visited);
+    case Op_Proj:
+      return needs_barrier_impl(phase, n->in(0), visited);
+    case Op_ShenandoahLoadReferenceBarrier:
+    case Op_AccessPreBarrier:
+      // tty->print_cr("optimize barrier on barrier");
+      return false;
+    case Op_Parm:
+      // tty->print_cr("optimize barrier on input arg");
+      return false;
+    case Op_DecodeN:
+    case Op_EncodeP:
+      return needs_barrier_impl(phase, n->in(1), visited);
+    case Op_LoadN:
+      return true;
+    case Op_CMoveN:
+    case Op_CMoveP:
+      return needs_barrier_impl(phase, n->in(2), visited) ||
+             needs_barrier_impl(phase, n->in(3), visited);
+    case Op_ShenandoahIUBarrier:
+      return needs_barrier_impl(phase, n->in(1), visited);
+    case Op_CreateEx:
+      return false;
+    default:
+      break;
+  }
+#ifdef ASSERT
+  tty->print("need barrier on?: ");
+  tty->print_cr("ins:");
+  n->dump(2);
+  tty->print_cr("outs:");
+  n->dump(-2);
+  ShouldNotReachHere();
+#endif
+  return true;
+}
+
+bool AccessPreBarrierNode::is_redundant() {
+  return false;
+//   Unique_Node_List visited;
+//   Node_Stack stack(0);
+//   stack.push(this, 0);
+
+//   // Check if the barrier is actually useful: go over nodes looking for useful uses
+//   // (e.g. memory accesses). Stop once we detected a required use. Otherwise, walk
+//   // until we ran out of nodes, and then declare the barrier redundant.
+//   while (stack.size() > 0) {
+//     Node* n = stack.node();
+//     if (visited.member(n)) {
+//       stack.pop();
+//       continue;
+//     }
+//     visited.push(n);
+//     bool visit_users = false;
+//     switch (n->Opcode()) {
+//       case Op_CallStaticJava:
+//       case Op_CallDynamicJava:
+//       case Op_CallLeaf:
+//       case Op_CallLeafNoFP:
+//       case Op_CompareAndSwapL:
+//       case Op_CompareAndSwapI:
+//       case Op_CompareAndSwapB:
+//       case Op_CompareAndSwapS:
+//       case Op_CompareAndSwapN:
+//       case Op_CompareAndSwapP:
+//       case Op_CompareAndExchangeL:
+//       case Op_CompareAndExchangeI:
+//       case Op_CompareAndExchangeB:
+//       case Op_CompareAndExchangeS:
+//       case Op_CompareAndExchangeN:
+//       case Op_CompareAndExchangeP:
+//       case Op_WeakCompareAndSwapL:
+//       case Op_WeakCompareAndSwapI:
+//       case Op_WeakCompareAndSwapB:
+//       case Op_WeakCompareAndSwapS:
+//       case Op_WeakCompareAndSwapN:
+//       case Op_WeakCompareAndSwapP:
+//       case Op_ShenandoahCompareAndSwapN:
+//       case Op_ShenandoahCompareAndSwapP:
+//       case Op_ShenandoahWeakCompareAndSwapN:
+//       case Op_ShenandoahWeakCompareAndSwapP:
+//       case Op_ShenandoahCompareAndExchangeN:
+//       case Op_ShenandoahCompareAndExchangeP:
+//       case Op_GetAndSetL:
+//       case Op_GetAndSetI:
+//       case Op_GetAndSetB:
+//       case Op_GetAndSetS:
+//       case Op_GetAndSetP:
+//       case Op_GetAndSetN:
+//       case Op_GetAndAddL:
+//       case Op_GetAndAddI:
+//       case Op_GetAndAddB:
+//       case Op_GetAndAddS:
+//       case Op_ShenandoahIUBarrier:
+//       case Op_FastLock:
+//       case Op_FastUnlock:
+//       case Op_Rethrow:
+//       case Op_Return:
+//       case Op_StoreB:
+//       case Op_StoreC:
+//       case Op_StoreD:
+//       case Op_StoreF:
+//       case Op_StoreL:
+//       case Op_StoreLConditional:
+//       case Op_StoreI:
+//       case Op_StoreIConditional:
+//       case Op_StoreN:
+//       case Op_StoreP:
+//       case Op_StoreVector:
+//       case Op_StrInflatedCopy:
+//       case Op_StrCompressedCopy:
+//       case Op_EncodeP:
+//       case Op_CastP2X:
+//       case Op_SafePoint:
+//       case Op_EncodeISOArray:
+//       case Op_AryEq:
+//       case Op_StrEquals:
+//       case Op_StrComp:
+//       case Op_StrIndexOf:
+//       case Op_StrIndexOfChar:
+//       case Op_HasNegatives:
+//         // Known to require barriers
+//         return false;
+//       case Op_CmpP: {
+//         if (n->in(1)->bottom_type()->higher_equal(TypePtr::NULL_PTR) ||
+//             n->in(2)->bottom_type()->higher_equal(TypePtr::NULL_PTR)) {
+//           // One of the sides is known null, no need for barrier.
+//         } else {
+//           return false;
+//         }
+//         break;
+//       }
+//       case Op_LoadB:
+//       case Op_LoadUB:
+//       case Op_LoadUS:
+//       case Op_LoadD:
+//       case Op_LoadF:
+//       case Op_LoadL:
+//       case Op_LoadI:
+//       case Op_LoadS:
+//       case Op_LoadN:
+//       case Op_LoadP:
+//       case Op_LoadVector: {
+//         const TypePtr* adr_type = n->adr_type();
+//         int alias_idx = Compile::current()->get_alias_index(adr_type);
+//         Compile::AliasType* alias_type = Compile::current()->alias_type(alias_idx);
+//         ciField* field = alias_type->field();
+//         bool is_static = field != NULL && field->is_static();
+//         bool is_final = field != NULL && field->is_final();
+
+//         if (ShenandoahOptimizeStaticFinals && is_static && is_final) {
+//           // Loading the constant does not require barriers: it should be handled
+//           // as part of GC roots already.
+//         } else {
+//           return false;
+//         }
+//         break;
+//       }
+//       case Op_Conv2B:
+//       case Op_LoadRange:
+//       case Op_LoadKlass:
+//       case Op_LoadNKlass:
+//         // Do not require barriers
+//         break;
+//       case Op_AddP:
+//       case Op_CheckCastPP:
+//       case Op_CastPP:
+//       case Op_CMoveP:
+//       case Op_Phi:
+//       case Op_ShenandoahLoadReferenceBarrier:
+//       case Op_AccessPreBarrier:
+//         // Whether or not these need the barriers depends on their users
+//         visit_users = true;
+//         break;
+//       default: {
+// #ifdef ASSERT
+//         fatal("Unknown node in is_redundant: %s", NodeClassNames[n->Opcode()]);
+// #else
+//         // Default to have excess barriers, rather than miss some.
+//         return false;
+// #endif
+//       }
+//     }
+
+//     stack.pop();
+//     if (visit_users) {
+//       for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
+//         Node* user = n->fast_out(i);
+//         if (user != NULL) {
+//           stack.push(user, 0);
+//         }
+//       }
+//     }
+//   }
+
+//   // No need for barrier found.
+//   return true;
+}
+
+CallStaticJavaNode* AccessPreBarrierNode::pin_and_expand_null_check(PhaseIterGVN& igvn) {
+  Node* val = in(ValueIn);
+
+  const Type* val_t = igvn.type(val);
+
+  if (val_t->meet(TypePtr::NULL_PTR) != val_t &&
+      val->Opcode() == Op_CastPP &&
+      val->in(0) != NULL &&
+      val->in(0)->Opcode() == Op_IfTrue &&
+      val->in(0)->as_Proj()->is_uncommon_trap_if_pattern(Deoptimization::Reason_none) &&
+      val->in(0)->in(0)->is_If() &&
+      val->in(0)->in(0)->in(1)->Opcode() == Op_Bool &&
+      val->in(0)->in(0)->in(1)->as_Bool()->_test._test == BoolTest::ne &&
+      val->in(0)->in(0)->in(1)->in(1)->Opcode() == Op_CmpP &&
+      val->in(0)->in(0)->in(1)->in(1)->in(1) == val->in(1) &&
+      val->in(0)->in(0)->in(1)->in(1)->in(2)->bottom_type() == TypePtr::NULL_PTR) {
+    assert(val->in(0)->in(0)->in(1)->in(1)->in(1) == val->in(1), "");
+    CallStaticJavaNode* unc = val->in(0)->as_Proj()->is_uncommon_trap_if_pattern(Deoptimization::Reason_none);
+    return unc;
+  }
+  return NULL;
 }

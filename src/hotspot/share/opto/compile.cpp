@@ -332,7 +332,17 @@ void Compile::identify_useful_nodes(Unique_Node_List &useful) {
     uint max = n->len();
     for( uint i = 0; i < max; ++i ) {
       Node *m = n->in(i);
-      if (not_a_node(m))  continue;
+      // if (m!=NULL && m->Opcode() == Op_AccessPreBarrier) tty->print_cr("Op_AccessPreBarrier detected");
+      if (not_a_node(m)) {
+        // if (m!=NULL && m->Opcode() == Op_AccessPreBarrier) {
+        //   bool uninitialized = ((intptr_t)m & 1) != 0;
+        //   bool killed = *(address*)m == badAddress;
+        //   tty->print_cr("@ identify_useful_nodes Op_AccessPreBarrier is not a node, uninitialized %d, killed %d", uninitialized, killed);
+        // }
+        continue;
+      }
+
+      // if (m!=NULL && m->Opcode() == Op_AccessPreBarrier) tty->print_cr("Op_AccessPreBarrier is useful");
       useful.push(m);
     }
   }
@@ -3492,6 +3502,10 @@ void Compile::final_graph_reshaping_impl( Node *n, Final_Reshape_Counts &frc) {
      break;
   case Op_ShenandoahLoadReferenceBarrier:
     assert(false, "should have been expanded already");
+    break;
+  case Op_AccessPreBarrier:
+    assert(false, "should have been expanded already");
+
     break;
 #endif
   case Op_RangeCheck: {

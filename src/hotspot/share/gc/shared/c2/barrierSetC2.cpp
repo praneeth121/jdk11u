@@ -245,7 +245,8 @@ Node* BarrierSetC2::load_at(C2Access& access, const Type* val_type) const {
 }
 
 Node* BarrierSetC2::access_pre_barrier(GraphKit* kit, Node* oop) const {
-  assert(false, "Should not reach here");
+  // assert(false, "Should not reach here");
+  return oop;
 }
 
 MemNode::MemOrd C2Access::mem_node_mo() const {

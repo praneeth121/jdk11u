@@ -1626,44 +1626,9 @@ void LIRGenerator::access_load_at(DecoratorSet decorators, BasicType type,
                                   CodeEmitInfo* patch_info, CodeEmitInfo* load_emit_info) {
   decorators |= C1_READ_ACCESS;
 
-  // Dat todo add barrier here
-
   if (UseShenandoahGC) {
-    // base.set_destroys_register();
-    // base.load_item();
-
-    // LIR_Opr tmp = new_register(T_OBJECT);
-    // __ move(LIR_OprFact::oopConst(NULL), tmp);
-    // __ increase_access_counter(base.result(), tmp);
-
-    // LIR_Opr zero = new_register(T_INT);
-    // __ move(LIR_OprFact::intConst(0), zero);
-    // LIRAccess access_base(this, decorators, base, zero, type, NULL, NULL);
     _barrier_set->access_pre_barrier(this, base.result());
-    // __ pre_barrier()
-
-
-    // -------------------------------------
-    // base.set_destroys_register();
-    // base.load_item();
-    // // LIR_Opr tmp = new_register(T_LONG);
-    // // __ move(LIR_OprFact::longConst(-0.0), tmp);
-
-    // LIR_Opr tmp = new_register(T_OBJECT);
-    // __ move(LIR_OprFact::oopConst(NULL), tmp);
-    // __ pre_barrier(base.result(), tmp);
   }
-
-  // if (UseShenandoahGC){
-  //   base.set_destroys_register();
-  //   base.load_item();
-  //   // LIR_Opr tmp = new_register(T_LONG);
-  //   // __ move(LIR_OprFact::longConst(-0.0), tmp);
-
-  //   LIR_Opr tmp = new_register(T_OBJECT);
-  //   __ move(LIR_OprFact::oopConst(NULL), tmp);
-  //   __ increase_access_counter(base.result(), tmp);
-  // }
 
   LIRAccess access(this, decorators, base, offset, type, patch_info, load_emit_info);
   if (access.is_raw()) {
@@ -1691,17 +1656,6 @@ void LIRGenerator::access_store_at(DecoratorSet decorators, BasicType type,
   decorators |= C1_WRITE_ACCESS;
 
   if (UseShenandoahGC) {
-    // base.set_destroys_register();
-    // base.load_item();
-
-    // LIR_Opr tmp = new_register(T_OBJECT);
-    // __ move(LIR_OprFact::oopConst(NULL), tmp);
-    // __ increase_access_counter(base.result(), tmp);
-
-    // LIR_Opr zero = new_register(T_INT);
-    // __ move(LIR_OprFact::intConst((jint)0), zero);
-    // LIRAccess access_base(this, decorators, base, zero, type, patch_info, store_emit_info);
-    // _barrier_set->access_pre_barrier(access_base);
     _barrier_set->access_pre_barrier(this, base.result());
   }
 

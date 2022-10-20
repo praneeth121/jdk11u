@@ -5453,7 +5453,6 @@ void MacroAssembler::store_klass(Register dst, Register src) {
 
 void MacroAssembler::access_pre_barrier(Address oop, Register tmp) {
   BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
-  // Dat todo raw or not, call vm to increase_access_counter
   if (UseShenandoahGC) bs->access_pre_barrier(this, oop, tmp);
 }
 

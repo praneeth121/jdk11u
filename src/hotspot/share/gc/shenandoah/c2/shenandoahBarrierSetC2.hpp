@@ -88,7 +88,7 @@ private:
 protected:
   virtual Node* load_at_resolved(C2Access& access, const Type* val_type) const;
   virtual Node* store_at_resolved(C2Access& access, C2AccessValue& val) const;
-  virtual Node* access_pre_barrier(GraphKit* kit, Node* oop) const;
+  virtual Node* access_pre_barrier(GraphKit* kit, Node* obj_node) const;
   virtual Node* atomic_cmpxchg_val_at_resolved(C2AtomicAccess& access, Node* expected_val,
                                                Node* new_val, const Type* val_type) const;
   virtual Node* atomic_cmpxchg_bool_at_resolved(C2AtomicAccess& access, Node* expected_val,

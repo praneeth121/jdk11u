@@ -601,6 +601,8 @@ class GraphKit : public Phase {
                     BasicType bt,
                     DecoratorSet decorators);
 
+  Node* access_pre_barrier(Node* obj);
+
   Node* access_atomic_cmpxchg_val_at(Node* ctl,
                                      Node* obj,
                                      Node* adr,

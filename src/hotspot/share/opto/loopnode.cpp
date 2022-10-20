@@ -3900,6 +3900,7 @@ void PhaseIdealLoop::build_loop_early( VectorSet &visited, Node_List &worklist, 
           set_ctrl(in, in->in(0));
         int is_visited = visited.test_set( in->_idx );
         if (!has_node(in)) {  // No controlling input yet?
+          if( in->is_CFG() ) in->dump(20);
           assert( !in->is_CFG(), "CFG Node with no controlling input?" );
           assert( !is_visited, "visit only once" );
           nstack.push(n, i);  // Save parent node and next input's index.

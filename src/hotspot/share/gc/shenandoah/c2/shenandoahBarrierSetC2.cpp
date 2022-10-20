@@ -47,7 +47,8 @@ ShenandoahBarrierSetC2* ShenandoahBarrierSetC2::bsc2() {
 
 ShenandoahBarrierSetC2State::ShenandoahBarrierSetC2State(Arena* comp_arena)
   : _iu_barriers(new (comp_arena) GrowableArray<ShenandoahIUBarrierNode*>(comp_arena, 8,  0, NULL)),
-    _load_reference_barriers(new (comp_arena) GrowableArray<ShenandoahLoadReferenceBarrierNode*>(comp_arena, 8,  0, NULL)) {
+    _load_reference_barriers(new (comp_arena) GrowableArray<ShenandoahLoadReferenceBarrierNode*>(comp_arena, 8,  0, NULL)),
+    _access_pre_barriers(new (comp_arena) GrowableArray<AccessPreBarrierNode*>(comp_arena, 8,  0, NULL)) {
 }
 
 int ShenandoahBarrierSetC2State::iu_barriers_count() const {
@@ -88,6 +89,8 @@ void ShenandoahBarrierSetC2State::remove_load_reference_barrier(ShenandoahLoadRe
   }
 }
 
+// ----------------------- access pre barrier ---------------------
+
 int ShenandoahBarrierSetC2State::access_pre_barriers_count() const {
   return _access_pre_barriers->length();
 }
@@ -98,13 +101,21 @@ AccessPreBarrierNode* ShenandoahBarrierSetC2State::access_pre_barrier(int idx) c
 
 void ShenandoahBarrierSetC2State::add_access_pre_barrier(AccessPreBarrierNode* n) {
   assert(!_access_pre_barriers->contains(n), "duplicate barrier");
+  tty->print_cr(">>>>>>>Adding a pre barrier");
   _access_pre_barriers->append(n);
 }
 
 void ShenandoahBarrierSetC2State::remove_access_pre_barrier(AccessPreBarrierNode* n) {
   assert(_access_pre_barriers->contains(n), "must contain");
+  tty->print_cr(">>>>>>>Delete a pre barrier");
   _access_pre_barriers->remove(n);
+
+  bool uninitialized = ((intptr_t)n & 1) != 0;
+  bool killed = *(address*)n == badAddress;
+  tty->print_cr("Remove prebarrier node, uninitialized %d, killed %d", uninitialized, killed);
 }
+
+// -------------------------------------------------------------------
 
 Node* ShenandoahBarrierSetC2::shenandoah_iu_barrier(GraphKit* kit, Node* obj) const {
   if (ShenandoahIUBarrier) {
@@ -523,6 +534,11 @@ const TypeFunc* ShenandoahBarrierSetC2::access_pre_barrier_Type() {
   const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+1, fields);
 
   // create result type (range)
+  // fields = TypeTuple::fields(1);
+  // fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL;
+  // const TypeTuple *range = TypeTuple::make(TypeFunc::Parms+1, fields);
+
+
   fields = TypeTuple::fields(0);
   const TypeTuple *range = TypeTuple::make(TypeFunc::Parms+0, fields);
 
@@ -555,14 +571,37 @@ Node* ShenandoahBarrierSetC2::store_at_resolved(C2Access& access, C2AccessValue&
 }
 
 Node* ShenandoahBarrierSetC2::load_at_resolved(C2Access& access, const Type* val_type) const {
+  GraphKit* kit = access.kit();
   // 1: non-reference load, no additional barrier is needed
-  if (!access.is_oop()) {
-    return BarrierSetC2::load_at_resolved(access, val_type);;
-  }
+  // if (!access.is_oop()) {
+  //   return BarrierSetC2::load_at_resolved(access, val_type);;
+  // }
 
   Node* load = BarrierSetC2::load_at_resolved(access, val_type);
+  Node* obj = access.base();
+  // if (load != NULL) {
+  //   Node* call = kit->make_runtime_call(GraphKit::RC_LEAF, access_pre_barrier_Type(),
+  //                         CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c2),
+  //                         "access_pre_barrier", TypeRawPtr::BOTTOM, obj);
+
+
+  //   // call->init_req(TypeFunc::Control, kit->control());
+  //   // Node* call = kit->gvn().transform(new AccessPreBarrierNode(NULL, obj));
+  //   load->add_req(call);
+  // }
+  // Node* call = kit->make_runtime_call(GraphKit::RC_LEAF, access_pre_barrier_Type(),
+  //                        CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c2),
+  //                        "access_pre_barrier", TypeRawPtr::BOTTOM, obj);
+  // call->init_req(call->req()-1, );
+  // // Node* call = kit->gvn().transform(new AccessPreBarrierNode(NULL, obj));
+  // call->add_req(load);
+
+  if (!access.is_oop()) {
+    return load;
+  }
   DecoratorSet decorators = access.decorators();
   BasicType type = access.type();
+
 
   // 2: apply LRB if needed
   if (ShenandoahBarrierSet::need_load_reference_barrier(decorators, type)) {
@@ -590,7 +629,6 @@ Node* ShenandoahBarrierSetC2::load_at_resolved(C2Access& access, const Type* val
     if (!on_weak_ref || (unknown && (offset == top || obj == top)) || !keep_alive) {
       return load;
     }
-    GraphKit* kit = access.kit();
     bool mismatched = (decorators & C2_MISMATCHED) != 0;
     bool is_unordered = (decorators & MO_UNORDERED) != 0;
     bool need_cpu_mem_bar = !is_unordered || mismatched;
@@ -613,16 +651,26 @@ Node* ShenandoahBarrierSetC2::load_at_resolved(C2Access& access, const Type* val
   return load;
 }
 
-Node* ShenandoahBarrierSetC2::access_pre_barrier(GraphKit* kit, Node* oop) const {
+Node* ShenandoahBarrierSetC2::access_pre_barrier(GraphKit* kit, Node* obj) const {
   // apb = new AccessPreBarrierNode(NULL, oop);
   // apb = kit->gvn().transform(apb);
   // return apb; // apb should be the same oop
 
-  kit->make_runtime_call(GraphKit::RC_LEAF, access_pre_barrier_Type(),
+  Node* call = kit->make_runtime_call(GraphKit::RC_LEAF, access_pre_barrier_Type(),
                          CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier_c2),
-                         "access_pre_barrier", TypeRawPtr::BOTTOM, oop);
-  return oop;
+                         "access_pre_barrier", TypeRawPtr::BOTTOM, obj);
+  // kit->make_slow_call_ex(call, kit->env()->Throwable_klass(), false);
+  // Node* result = kit->gvn().transform(new ProjNode(call, TypeFunc::Parms));
+  // Node* cast = kit->gvn().transform( new CheckCastPPNode(result, TypePtr::NotNull) );
+  // return result;
+  // kit->transform_later(call);
 
+  
+  // bool control_dependent = (decorators & C2_CONTROL_DEPENDENT_LOAD) != 0;
+  // Node* control = control_dependent ? kit->control() : NULL;
+
+  // return kit->gvn().transform(new AccessPreBarrierNode(kit->control(), oop));
+  return call;
 }
 
 static void pin_atomic_op(C2AtomicAccess& access) {
@@ -760,6 +808,7 @@ Node* ShenandoahBarrierSetC2::atomic_xchg_at_resolved(C2AtomicAccess& access, No
 // Support for GC barriers emitted during parsing
 bool ShenandoahBarrierSetC2::is_gc_barrier_node(Node* node) const {
   if (node->Opcode() == Op_ShenandoahLoadReferenceBarrier) return true;
+  if (node->Opcode() == Op_AccessPreBarrier) return true;
   if (node->Opcode() != Op_CallLeaf && node->Opcode() != Op_CallLeafNoFP) {
     return false;
   }
@@ -770,7 +819,8 @@ bool ShenandoahBarrierSetC2::is_gc_barrier_node(Node* node) const {
 
   return strcmp(call->_name, "shenandoah_clone_barrier") == 0 ||
          strcmp(call->_name, "shenandoah_cas_obj") == 0 ||
-         strcmp(call->_name, "shenandoah_wb_pre") == 0;
+         strcmp(call->_name, "shenandoah_wb_pre") == 0 || 
+         strcmp(call->_name, "access_pre_barrier") == 0;
 }
 
 Node* ShenandoahBarrierSetC2::step_over_gc_barrier(Node* c) const {
@@ -779,6 +829,9 @@ Node* ShenandoahBarrierSetC2::step_over_gc_barrier(Node* c) const {
   }
   if (c->Opcode() == Op_ShenandoahLoadReferenceBarrier) {
     return c->in(ShenandoahLoadReferenceBarrierNode::ValueIn);
+  }
+  if (c->Opcode() == Op_AccessPreBarrier) {
+    return c->in(AccessPreBarrierNode::ValueIn);
   }
   if (c->Opcode() == Op_ShenandoahIUBarrier) {
     c = c->in(1);
@@ -921,6 +974,9 @@ void ShenandoahBarrierSetC2::register_potential_barrier_node(Node* node) const {
   if (node->Opcode() == Op_ShenandoahLoadReferenceBarrier) {
     state()->add_load_reference_barrier((ShenandoahLoadReferenceBarrierNode*) node);
   }
+  if (node->Opcode() == Op_AccessPreBarrier) {
+    state()->add_access_pre_barrier((AccessPreBarrierNode*) node);
+  }
 }
 
 void ShenandoahBarrierSetC2::unregister_potential_barrier_node(Node* node) const {
@@ -929,6 +985,9 @@ void ShenandoahBarrierSetC2::unregister_potential_barrier_node(Node* node) const
   }
   if (node->Opcode() == Op_ShenandoahLoadReferenceBarrier) {
     state()->remove_load_reference_barrier((ShenandoahLoadReferenceBarrierNode*) node);
+  }
+  if (node->Opcode() == Op_AccessPreBarrier) {
+    state()->remove_access_pre_barrier((AccessPreBarrierNode*) node);
   }
 }
 
@@ -987,6 +1046,12 @@ void ShenandoahBarrierSetC2::eliminate_useless_gc_barriers(Unique_Node_List &use
     ShenandoahLoadReferenceBarrierNode* n = state()->load_reference_barrier(i);
     if (!useful.member(n)) {
       state()->remove_load_reference_barrier(n);
+    }
+  }
+  for (int i = state()->access_pre_barriers_count() - 1; i >= 0; i--) {
+    AccessPreBarrierNode* n = state()->access_pre_barrier(i);
+    if (!useful.member(n)) {
+      state()->remove_access_pre_barrier(n);
     }
   }
 }

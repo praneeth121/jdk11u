@@ -283,9 +283,9 @@ macro(ShenandoahWeakCompareAndSwapN)
 macro(ShenandoahWeakCompareAndSwapP)
 macro(ShenandoahIUBarrier)
 macro(ShenandoahLoadReferenceBarrier)
-#endif
 // dat mod
 macro(AccessPreBarrier)
+#endif
 macro(SCMemProj)
 macro(CopySignD)
 macro(CopySignF)
