@@ -49,6 +49,15 @@ JRT_LEAF(void, ShenandoahRuntime::write_ref_field_pre_entry(oopDesc* orig, JavaT
   ShenandoahThreadLocalData::satb_mark_queue(thread).enqueue_known_active(orig);
 JRT_END
 
+JRT_LEAF(void, ShenandoahRuntime::write_ref_field_pre_entry_c2(oopDesc* orig, JavaThread *thread))
+  tty->print_cr("---------------------------->write_ref_field_pre_entry_c2");
+  assert(orig != NULL, "should be optimized out");
+  shenandoah_assert_correct(NULL, orig);
+  // store the original value that was in the field reference
+  assert(ShenandoahThreadLocalData::satb_mark_queue(thread).is_active(), "Shouldn't be here otherwise");
+  ShenandoahThreadLocalData::satb_mark_queue(thread).enqueue_known_active(orig);
+JRT_END
+
 JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier(oopDesc* src, oop* load_addr))
   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
 JRT_END
@@ -56,6 +65,16 @@ JRT_END
 JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_narrow(oopDesc* src, narrowOop* load_addr))
   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
 JRT_END
+
+// JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_c2(oopDesc* src, oop* load_addr))
+//   // tty->print_cr("---------------------------->LRB C2");
+//   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
+// JRT_END
+
+// JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_narrow_c2(oopDesc* src, narrowOop* load_addr))
+//   // tty->print_cr("---------------------------->LRB C2");
+//   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
+// JRT_END
 
 JRT_LEAF(void, ShenandoahRuntime::pre_barrier(oopDesc* obj))
   ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 0);
@@ -67,7 +86,7 @@ JRT_LEAF(void, ShenandoahRuntime::pre_barrier_c1(oopDesc* obj))
 JRT_END
 
 JRT_LEAF(void, ShenandoahRuntime::pre_barrier_c2(oopDesc* obj))
-  // tty->print_cr("Prebarrier C2");
+  // tty->print_cr("---------------------------->Prebarrier C2");
   ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 2);
 JRT_END
 
