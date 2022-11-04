@@ -1791,6 +1791,7 @@ CompileLog* CompileBroker::get_log(CompilerThread* ct) {
 //
 // The main loop run by a CompilerThread.
 void CompileBroker::compiler_thread_loop() {
+  // Dat note loop run by compiler thread
   CompilerThread* thread = CompilerThread::current();
   CompileQueue* queue = thread->queue();
   // For the thread that initializes the ciObjectFactory
@@ -1825,6 +1826,8 @@ void CompileBroker::compiler_thread_loop() {
 
   thread->start_idle_timer();
 
+
+  // Dat note: main loop here
   // Poll for new compilation tasks as long as the JVM runs. Compilation
   // should only be disabled if something went wrong while initializing the
   // compiler runtimes. This, in turn, should not happen. The only known case
@@ -1873,7 +1876,7 @@ void CompileBroker::compiler_thread_loop() {
       if (method()->number_of_breakpoints() == 0) {
         // Compile the method.
         if ((UseCompiler || AlwaysCompileLoopMethods) && CompileBroker::should_compile_new_jobs()) {
-          invoke_compiler_on_method(task);
+          invoke_compiler_on_method(task); // dat note: compiler obj is init here
           thread->start_idle_timer();
         } else {
           // After compilation is disabled, remove remaining methods from queue

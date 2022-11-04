@@ -57,9 +57,11 @@ class oopDesc {
   friend class VMStructs;
   friend class JVMCIVMStructs;
  private:
-  volatile size_t _access_counter;
-  volatile size_t _gc_epoch; // Contain initialize bit as first bit, the rest is gc_epoch
   volatile markOop _mark;
+  volatile hotnessField _hotness_field;
+  // volatile size_t _access_counter;
+  // volatile size_t _gc_epoch; // Contain initialize bit as first bit, the rest is gc_epoch
+  // volatile size_t _tramp_ref;
   union _metadata {
     Klass*      _klass;
     narrowKlass _compressed_klass;
@@ -84,19 +86,45 @@ class oopDesc {
   inline void init_mark();
   inline void init_mark_raw();
 
-  inline size_t access_counter() const;
-  inline size_t access_counter_with_check() const;
+  // -----------------------hotness field-----------------------
+  static inline hotnessField hotness_field(void* mem);
+  inline hotnessField hotness_field();
+  // static inline hotnessField hotness_field_raw(void* mem);
+  inline hotnessField hotness_field_raw();
 
-  inline size_t gc_epoch_raw() const;
+  static inline void set_hotness_field(HeapWord* mem, hotnessField hf);
+  inline void set_hotness_field(hotnessField hf);
+  inline hotnessField cas_set_hotness_field(hotnessField new_hf, hotnessField old_hf);
+  inline hotnessField cas_set_hotness_field_raw(hotnessField new_hf, hotnessField old_hf, atomic_memory_order order = memory_order_conservative);
 
-  inline void set_access_counter(size_t new_value);
-  static inline void set_access_counter(HeapWord* mem, size_t new_value);
+  inline void set_cross_server_pointee();
+  inline void unset_cross_server_pointee();
+  inline bool is_cross_server_pointee();
+
+  static inline size_t access_counter(void* mem);
+  inline size_t access_counter();
+  static inline size_t access_counter_resolved(void* mem);
+  // inline size_t access_counter_with_check() const;
+
+  static inline size_t gc_epoch(void* mem);
+  inline size_t gc_epoch();
+
+  static inline size_t trampoline_ref(void* mem);
+  inline size_t trampoline_ref();
+
+  // inline void set_access_counter(size_t new_value);
+  // static inline void set_access_counter(HeapWord* mem, size_t new_value);
 
   inline size_t increase_access_counter();
-  static inline void increase_access_counter(HeapWord* mem);
+  inline size_t increase_access_counter(size_t increment);
+  static inline size_t increase_access_counter(HeapWord* mem);
 
-  inline void set_gc_epoch(size_t new_value);
-  static inline void set_gc_epoch(HeapWord* mem, size_t new_value);
+  // inline void set_gc_epoch(size_t new_value);
+  // static inline void set_gc_epoch(HeapWord* mem, size_t new_value);
+
+  inline void set_trampoline_ref(int new_value);
+  static inline void set_trampoline_ref(HeapWord* mem, int new_value);
+  // -------------------------------------------------------------
 
   inline Klass* klass() const;
   inline Klass* klass_local() const;
@@ -149,7 +177,11 @@ class oopDesc {
 
   // remote mem
   static inline bool is_remote_oop(void* mem);
-  inline bool is_remote_oop()                  const;
+  inline bool is_remote_oop()          const;
+
+  // check hotness
+  static inline bool is_hot_oop(void* mem);
+  inline bool is_hot_oop()             const;
 
  protected:
   inline oop        as_oop() const { return const_cast<oopDesc*>(this); }
@@ -351,8 +383,10 @@ class oopDesc {
 
   // for code generation
   static int mark_offset_in_bytes()      { return offset_of(oopDesc, _mark); }
-  static int access_counter_offset_in_bytes() {return offset_of(oopDesc, _access_counter); }
-  static int gc_epoch_offset_in_bytes() {return offset_of(oopDesc, _gc_epoch); }
+  // static int access_counter_offset_in_bytes() {return offset_of(oopDesc, _access_counter); }
+  // static int gc_epoch_offset_in_bytes() {return offset_of(oopDesc, _gc_epoch); }
+  // static int tramp_ref_offset_in_bytes() {return offset_of(oopDesc, _tramp_ref); }
+  static int hotness_field_offset_in_bytes()      { return offset_of(oopDesc, _hotness_field); }
   static int klass_offset_in_bytes()     { return offset_of(oopDesc, _metadata._klass); }
   static int klass_gap_offset_in_bytes() {
     assert(has_klass_gap(), "only applicable to compressed klass pointers");

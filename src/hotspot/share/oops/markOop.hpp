@@ -395,4 +395,113 @@ class markOopDesc: public oopDesc {
 #endif // _LP64
 };
 
+class hotnessFieldDesc {
+public:
+  uintptr_t true_value() const { return (uintptr_t) true_hotness_field(); }
+
+  uintptr_t value() const { return (uintptr_t) this; }
+
+  enum {
+    // trampoline_ref_bits      = BitsPerWord / 2,
+    // access_counter_bits      = (BitsPerWord - trampoline_ref_bits) / 2,
+    // gc_epoch_bits            = BitsPerWord - trampoline_ref_bits - access_counter_bits
+    
+    access_counter_bits      = BitsPerWord / 2,
+    gc_epoch_bits            = (BitsPerWord - access_counter_bits) / 2,
+    trampoline_ref_bits      = BitsPerWord - access_counter_bits - gc_epoch_bits
+  };
+
+  enum {
+    access_counter_shift          = 0,
+    gc_epoch_shift                = access_counter_shift + access_counter_bits,
+    trampoline_ref_shift          = gc_epoch_shift + gc_epoch_bits
+  };
+
+  enum {
+    access_counter_mask           = right_n_bits(access_counter_bits),
+    access_counter_mask_in_place  = access_counter_mask << access_counter_shift,
+    gc_epoch_mask                 = right_n_bits(gc_epoch_bits),
+    gc_epoch_mask_in_place        = gc_epoch_mask << gc_epoch_shift,
+    trampoline_ref_mask           = right_n_bits(trampoline_ref_bits),
+    trampoline_ref_mask_in_place  = trampoline_ref_mask << trampoline_ref_shift
+  };
+
+  hotnessField true_hotness_field() const {
+    // tty->print_cr("true_hotness_field");
+    size_t gce = gc_epoch_raw();
+    uintptr_t bits = value();
+
+    if (gce != oopDesc::static_gc_epoch) {
+      // size_t ac = access_counter();
+      size_t tramp_ref = trampoline_ref_raw();
+      bits = bits & ~access_counter_mask_in_place;
+      if (tramp_ref == trampoline_ref_mask) bits = bits & ~trampoline_ref_mask_in_place;
+      bits = bits & ~gc_epoch_mask_in_place;
+      bits = bits | ((uintptr_t)oopDesc::static_gc_epoch & gc_epoch_mask) << gc_epoch_shift;
+      // gce = hotnessField(bits)->gc_epoch()
+    }
+    return hotnessField(bits);
+  }
+
+  hotnessField set_trampoline_ref(size_t v) const {
+    assert((v & ~trampoline_ref_mask) == 0, "shouldn't overflow field");
+    return hotnessField((true_value() & ~trampoline_ref_mask_in_place) | (((uintptr_t)v & trampoline_ref_mask) << trampoline_ref_shift));
+  }
+
+  size_t trampoline_ref() const { return mask_bits(true_value() >> trampoline_ref_shift, trampoline_ref_mask); }
+  size_t trampoline_ref_raw() const { return mask_bits(value() >> trampoline_ref_shift, trampoline_ref_mask); }
+
+  hotnessField set_access_counter(size_t v) const {
+    // assert((v & ~access_counter_mask) == 0, "shouldn't overflow age field");
+    if (v > access_counter_mask) {
+      v = access_counter_mask;
+    }
+    // zero the bits then and new bits
+    return hotnessField((true_value() & ~access_counter_mask_in_place) | (((uintptr_t)v & access_counter_mask) << access_counter_shift));
+  }
+
+  hotnessField set_access_counter_raw(size_t v) const {
+    // assert((v & ~access_counter_mask) == 0, "shouldn't overflow age field");
+    if (v > access_counter_mask) {
+      v = access_counter_mask;
+    }
+    // zero the bits then and new bits
+    return hotnessField((value() & ~access_counter_mask_in_place) | (((uintptr_t)v & access_counter_mask) << access_counter_shift));
+  }
+
+  size_t access_counter() const { return mask_bits(true_value() >> access_counter_shift, access_counter_mask); }
+  size_t access_counter_raw() const { return mask_bits(value() >> access_counter_shift, access_counter_mask); }
+
+  hotnessField set_gc_epoch_raw(size_t v) const {
+    // ((v & ~gc_epoch_mask) == 0, "shouldn't overflow age field");
+    if (v > gc_epoch_mask) {
+      v = gc_epoch_mask;
+    }
+    return hotnessField((value() & ~gc_epoch_mask_in_place) | (((uintptr_t)v & gc_epoch_mask) << gc_epoch_shift));
+  }
+
+  size_t gc_epoch() const { return mask_bits(true_value() >> gc_epoch_shift, gc_epoch_mask); }
+  size_t gc_epoch_raw() const { return mask_bits(value() >> gc_epoch_shift, gc_epoch_mask); }
+
+  hotnessField increase_access_counter(size_t increment) const {
+    hotnessField true_hf = true_hotness_field();
+    size_t ac = true_hf->access_counter();
+    return true_hf->set_access_counter_raw(ac + increment);
+  }
+
+  hotnessField increase_access_counter() const {
+    return increase_access_counter(1);
+  }
+
+  hotnessField set_cross_server_pointee() const {
+    // set tramp ref to be all 1s
+    return set_trampoline_ref(trampoline_ref_mask);
+  }
+
+  bool is_cross_server_pointee() const {
+    return trampoline_ref() == trampoline_ref_mask;
+  }
+
+};
+
 #endif // SHARE_VM_OOPS_MARKOOP_HPP

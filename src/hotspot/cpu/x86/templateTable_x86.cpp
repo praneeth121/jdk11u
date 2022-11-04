@@ -4144,8 +4144,9 @@ void TemplateTable::_new() {
       __ movptr(Address(rax, oopDesc::mark_offset_in_bytes ()), rbx);
 
       // zero ac and gc_epoch
-      __ movptr(Address(rax, oopDesc::access_counter_offset_in_bytes ()), (intptr_t)0);
-      __ movptr(Address(rax, oopDesc::gc_epoch_offset_in_bytes ()), (intptr_t)0);
+      // __ movptr(Address(rax, oopDesc::access_counter_offset_in_bytes ()), (intptr_t)0);
+      // __ movptr(Address(rax, oopDesc::gc_epoch_offset_in_bytes ()), (intptr_t)0);
+      __ movptr(Address(rax, oopDesc::hotness_field_offset_in_bytes ()), (intptr_t)0);
 
       // // rsi is length of ac and gc epoch
       // // r9 is tmp
@@ -4168,8 +4169,9 @@ void TemplateTable::_new() {
                 (intptr_t)markOopDesc::prototype()); // header
 
       // zero ac and gc_epoch
-      __ movptr(Address(rax, oopDesc::access_counter_offset_in_bytes ()), (intptr_t)0);
-      __ movptr(Address(rax, oopDesc::gc_epoch_offset_in_bytes ()), (intptr_t)0);
+      // __ movptr(Address(rax, oopDesc::access_counter_offset_in_bytes ()), (intptr_t)0);
+      // __ movptr(Address(rax, oopDesc::gc_epoch_offset_in_bytes ()), (intptr_t)0);
+      __ movptr(Address(rax, oopDesc::hotness_field_offset_in_bytes ()), (intptr_t)0);
 
       // // rsi is length of ac and gc epoch
       // // r9 is tmp

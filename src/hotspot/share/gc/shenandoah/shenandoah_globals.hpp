@@ -284,8 +284,14 @@
           "Many heuristics automatically enable this. This option is "      \
           "similar to global ExplicitGCInvokesConcurrent.")                 \
                                                                             \
+  experimental(uintx, hotnessBoundary, 1>>20,                               \
+          "oop ac larger or equal to this value is considered hot")         \
+                                                                            \
   experimental(bool, doEvacToRemote, false,                                 \
           "Perform evacucation of cold obj to remote mem")                  \
+                                                                            \
+  experimental(bool, isMemServer, false,                                    \
+          "Turn on the functionality of the memory server")                 \
                                                                             \
   experimental(uintx, numRemoteMems, 2,                                     \
           "Number of RDMA connections")                                     \

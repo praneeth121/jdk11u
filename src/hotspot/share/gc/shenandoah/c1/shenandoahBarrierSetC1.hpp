@@ -150,6 +150,37 @@ public:
 #endif // PRODUCT
 };
 
+class ArrayAccessPreBarrierStub: public CodeStub {
+  friend class ShenandoahBarrierSetC1;
+private:
+  LIR_Opr _obj1;
+  LIR_Opr _obj2;
+  LIR_Opr _length;
+
+public:
+  ArrayAccessPreBarrierStub(LIR_Opr obj1, LIR_Opr obj2, LIR_Opr length) : _obj1(obj1), _obj2(obj2), _length(length) {
+    assert(_obj1->is_register(), "should be register");
+    assert(_obj2->is_register(), "should be register");
+    assert(_length->is_register(), "should be register");
+  }
+
+  LIR_Opr obj1() const { return _obj1; }
+  LIR_Opr obj2() const { return _obj2; }
+  LIR_Opr length() const { return _length; }
+
+  virtual void emit_code(LIR_Assembler* e);
+  virtual void visit(LIR_OpVisitState* visitor) {
+    visitor->do_slow_case();
+    visitor->do_input(_obj1);
+    visitor->do_input(_obj2);
+    visitor->do_input(_length);
+    // visitor->do_temp(_obj);
+  }
+#ifndef PRODUCT
+  virtual void print_name(outputStream* out) const { out->print("ArrayAccessPreBarrierStub"); }
+#endif // PRODUCT
+};
+
 class LIR_OpShenandoahCompareAndSwap : public LIR_Op {
  friend class LIR_OpVisitState;
 
@@ -213,6 +244,7 @@ private:
   CodeBlob* _pre_barrier_c1_runtime_code_blob;
   CodeBlob* _load_reference_barrier_rt_code_blob;
   CodeBlob* _access_pre_barrier_rt_code_blob;
+  CodeBlob* _array_access_pre_barrier_rt_code_blob;
 
   void pre_barrier(LIRGenerator* gen, CodeEmitInfo* info, DecoratorSet decorators, LIR_Opr addr_opr, LIR_Opr pre_val);
 
@@ -224,6 +256,7 @@ private:
   LIR_Opr ensure_in_register(LIRGenerator* gen, LIR_Opr obj, BasicType type);
 
   void access_pre_barrier_impl(LIRGenerator* gen, LIR_Opr obj);
+  void array_access_pre_barrier_impl(LIRGenerator* gen, LIR_Opr obj1, LIR_Opr obj2, LIR_Opr length);
 
 public:
   ShenandoahBarrierSetC1();
@@ -243,6 +276,11 @@ public:
     return _access_pre_barrier_rt_code_blob;
   }
 
+  CodeBlob* array_access_pre_barrier_rt_code_blob() {
+    assert(_array_access_pre_barrier_rt_code_blob != NULL, "");
+    return _array_access_pre_barrier_rt_code_blob;
+  }
+
 protected:
 
   virtual void store_at_resolved(LIRAccess& access, LIR_Opr value);
@@ -258,6 +296,7 @@ public:
   virtual void generate_c1_runtime_stubs(BufferBlob* buffer_blob);
 
   virtual void access_pre_barrier(LIRGenerator* gen, LIR_Opr oop);
+  virtual void array_access_pre_barrier(LIRGenerator* gen, LIR_Opr oop1, LIR_Opr oop2, LIR_Opr length);
 };
 
 #endif // SHARE_GC_SHENANDOAH_C1_SHENANDOAHBARRIERSETC1_HPP

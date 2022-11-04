@@ -92,6 +92,7 @@ public:
   inline oop load_reference_barrier_mutator(oop obj, T* load_addr);
 
   inline void pre_barrier_mutator(oop obj, int compiler_id=0);
+  inline void arraycopy_pre_barrier_mutator(oop obj1, oop obj2, size_t length);
 
 private:
   template <class T>

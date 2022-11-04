@@ -186,6 +186,40 @@ void HandleMark::operator delete[](void* p) {
   FreeHeap(p);
 }
 
+oop Handle::obj() const {
+  if (_handle == NULL) return (oop)NULL;
+  if (doEvacToRemote) {
+    assert(!Universe::heap()->remote_mem()->is_in((void*)_handle), "Handle must not be remote");
+  }
+  return *_handle;
+}
+
+oop Handle::non_null_obj() const {
+  assert(_handle != NULL, "resolving NULL handle");
+  if (doEvacToRemote) {
+    assert(!Universe::heap()->remote_mem()->is_in((void*)_handle), "Handle must not be remote");
+  }
+  return *_handle;
+}
+
+oop Handle::non_null_obj_remotable() const {
+  assert(_handle != NULL, "resolving NULL handle");
+  oop obj = oop(*_handle);
+  if (obj->is_remote_oop()) {
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(!r_mem->is_in((void*)_handle), "Handle must not be remote");
+    if (r_mem->is_in_evac_set((oop)(void*)obj)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)obj);
+      assert(buffering_addr, "remote addr must not be null");
+      tty->print_cr("Arrow operation of remote addr");
+      oop buffering_oop = oop(buffering_addr);
+      return buffering_oop;
+    }
+    assert(false, "Handle this using rdma call");
+  }
+  return obj;
+}
+
 #ifdef ASSERT
 
 NoHandleMark::NoHandleMark() {

@@ -52,10 +52,16 @@ void AccessPreBarrierStub::emit_code(LIR_Assembler* ce) {
   bs->gen_access_pre_barrier_stub(ce, this);
 }
 
+void ArrayAccessPreBarrierStub::emit_code(LIR_Assembler* ce) {
+  ShenandoahBarrierSetAssembler* bs = (ShenandoahBarrierSetAssembler*)BarrierSet::barrier_set()->barrier_set_assembler();
+  bs->gen_array_access_pre_barrier_stub(ce, this);
+}
+
 ShenandoahBarrierSetC1::ShenandoahBarrierSetC1() :
   _pre_barrier_c1_runtime_code_blob(NULL),
   _load_reference_barrier_rt_code_blob(NULL),
-  _access_pre_barrier_rt_code_blob(NULL) {}
+  _access_pre_barrier_rt_code_blob(NULL),
+  _array_access_pre_barrier_rt_code_blob(NULL) {}
 
 void ShenandoahBarrierSetC1::pre_barrier(LIRGenerator* gen, CodeEmitInfo* info, DecoratorSet decorators, LIR_Opr addr_opr, LIR_Opr pre_val) {
   // First we test whether marking is in progress.
@@ -169,6 +175,20 @@ void ShenandoahBarrierSetC1::access_pre_barrier_impl(LIRGenerator* gen, LIR_Opr 
   __ branch_destination(slow->continuation());
 }
 
+void ShenandoahBarrierSetC1::array_access_pre_barrier_impl(LIRGenerator* gen, LIR_Opr obj1, LIR_Opr obj2, LIR_Opr length) {
+  obj1 = ensure_in_register(gen, obj1, T_OBJECT);
+  assert(obj1->is_register(), "must be a register at this point");
+  obj2 = ensure_in_register(gen, obj2, T_OBJECT);
+  assert(obj2->is_register(), "must be a register at this point");
+  length = ensure_in_register(gen, length, T_OBJECT);
+  assert(length->is_register(), "must be a register at this point");
+
+  // CodeStub* slow = new ShenandoahLoadReferenceBarrierStub(obj, addr, result, tmp1, tmp2);
+  CodeStub* slow = new ArrayAccessPreBarrierStub(obj1, obj2, length);
+  __ branch(lir_cond_notEqual, T_INT, slow);
+  __ branch_destination(slow->continuation());
+}
+
 LIR_Opr ShenandoahBarrierSetC1::ensure_in_register(LIRGenerator* gen, LIR_Opr obj, BasicType type) {
   if (!obj->is_register()) {
     LIR_Opr obj_reg;
@@ -277,6 +297,14 @@ class C1ShenandoahAccessPreBarrierCodeGenClosure : public StubAssemblerCodeGenCl
   }
 };
 
+class C1ShenandoahArrayAccessPreBarrierCodeGenClosure : public StubAssemblerCodeGenClosure {
+  virtual OopMapSet* generate_code(StubAssembler* sasm) {
+    ShenandoahBarrierSetAssembler* bs = (ShenandoahBarrierSetAssembler*)BarrierSet::barrier_set()->barrier_set_assembler();
+    bs->generate_array_access_pre_barrier_runtime_stub(sasm);
+    return NULL;
+  }
+};
+
 void ShenandoahBarrierSetC1::generate_c1_runtime_stubs(BufferBlob* buffer_blob) {
   C1ShenandoahPreBarrierCodeGenClosure pre_code_gen_cl;
   _pre_barrier_c1_runtime_code_blob = Runtime1::generate_blob(buffer_blob, -1,
@@ -293,6 +321,11 @@ void ShenandoahBarrierSetC1::generate_c1_runtime_stubs(BufferBlob* buffer_blob) 
   _access_pre_barrier_rt_code_blob = Runtime1::generate_blob(buffer_blob, -1,
                                                               "access_pre_barrier_slow",
                                                               false, &access_pre_code_gen_cl);
+
+  C1ShenandoahArrayAccessPreBarrierCodeGenClosure array_access_pre_barrier_code_gen_cl;
+  _array_access_pre_barrier_rt_code_blob = Runtime1::generate_blob(buffer_blob, -1,
+                                                              "array_access_pre_barrier_slow",
+                                                              false, &array_access_pre_barrier_code_gen_cl);
 }
 
 void ShenandoahBarrierSetC1::access_pre_barrier(LIRGenerator* gen, LIR_Opr oop) {
@@ -302,4 +335,13 @@ void ShenandoahBarrierSetC1::access_pre_barrier(LIRGenerator* gen, LIR_Opr oop) 
   // access.set_resolved_addr(resolved);
 
   access_pre_barrier_impl(gen, oop);
+}
+
+void ShenandoahBarrierSetC1::array_access_pre_barrier(LIRGenerator* gen, LIR_Opr oop1, LIR_Opr oop2, LIR_Opr length) {
+  // LIRGenerator* gen = access.gen();
+
+  // LIR_Opr resolved = resolve_address(access, false);
+  // access.set_resolved_addr(resolved);
+
+  array_access_pre_barrier_impl(gen, oop1, oop2, length);
 }

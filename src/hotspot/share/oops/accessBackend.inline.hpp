@@ -131,9 +131,11 @@ template <DecoratorSet ds, typename T>
 inline typename EnableIf<
   HasDecorator<ds, MO_SEQ_CST>::value, T>::type
 RawAccessBarrier<decorators>::load_internal(void* addr) {
+  // Dat todo: ac barrier here and resolve for remote oop
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
 
@@ -150,7 +152,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::load_internal(void* addr) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return OrderAccess::load_acquire(reinterpret_cast<const volatile T*>(addr));
@@ -163,7 +166,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::load_internal(void* addr) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return Atomic::load(reinterpret_cast<const volatile T*>(addr));
@@ -176,7 +180,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::load_internal(void* addr) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return *reinterpret_cast<const volatile T*>(addr);
@@ -189,7 +194,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::load_internal(void* addr) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return *reinterpret_cast<T*>(addr);
@@ -202,7 +208,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   OrderAccess::release_store_fence(reinterpret_cast<volatile T*>(addr), value);
@@ -215,7 +222,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   OrderAccess::release_store(reinterpret_cast<volatile T*>(addr), value);
@@ -228,7 +236,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   Atomic::store(value, reinterpret_cast<volatile T*>(addr));
@@ -241,7 +250,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   (void)const_cast<T&>(*reinterpret_cast<volatile T*>(addr) = value);
@@ -255,7 +265,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::store_internal(void* addr, T value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   *reinterpret_cast<T*>(addr) = value;
@@ -268,7 +279,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::atomic_cmpxchg_internal(T new_value, void* addr, T compare_value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return Atomic::cmpxchg(new_value,
@@ -284,7 +296,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::atomic_cmpxchg_internal(T new_value, void* addr, T compare_value) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return Atomic::cmpxchg(new_value,
@@ -300,7 +313,8 @@ inline typename EnableIf<
 RawAccessBarrier<decorators>::atomic_xchg_internal(T new_value, void* addr) {
   if (doEvacToRemote) { 
     if (Universe::heap()->remote_mem()->is_in(addr)) {
-      assert(false, "accessing remote mem");
+      tty->print_cr("Accessing remote mem");
+      assert(false, "Remote access, hold it");
     }
   }
   return Atomic::xchg(new_value,

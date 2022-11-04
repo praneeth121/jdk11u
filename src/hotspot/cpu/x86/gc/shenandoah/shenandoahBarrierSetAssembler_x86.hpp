@@ -32,6 +32,7 @@ class ShenandoahPreBarrierStub;
 class ShenandoahLoadReferenceBarrierStub;
 class StubAssembler;
 class AccessPreBarrierStub;
+class ArrayAccessPreBarrierStub;
 #endif
 class StubCodeGenerator;
 
@@ -73,10 +74,12 @@ public:
 #ifdef COMPILER1
   void gen_pre_barrier_stub(LIR_Assembler* ce, ShenandoahPreBarrierStub* stub);
   void gen_access_pre_barrier_stub(LIR_Assembler* ce, AccessPreBarrierStub* stub);
+  void gen_array_access_pre_barrier_stub(LIR_Assembler* ce, ArrayAccessPreBarrierStub* stub);
   void gen_load_reference_barrier_stub(LIR_Assembler* ce, ShenandoahLoadReferenceBarrierStub* stub);
   void generate_c1_pre_barrier_runtime_stub(StubAssembler* sasm);
   void generate_c1_load_reference_barrier_runtime_stub(StubAssembler* sasm);
   void generate_access_pre_barrier_runtime_stub(StubAssembler* sasm);
+  void generate_array_access_pre_barrier_runtime_stub(StubAssembler* sasm);
 #endif
 
   void load_reference_barrier(MacroAssembler* masm, Register dst, Address src);

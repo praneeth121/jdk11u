@@ -90,6 +90,11 @@ JRT_LEAF(void, ShenandoahRuntime::pre_barrier_c2(oopDesc* obj))
   ShenandoahBarrierSet::barrier_set()->pre_barrier_mutator(obj, 2);
 JRT_END
 
+
+JRT_LEAF(void, ShenandoahRuntime::arraycopy_pre_barrier(oopDesc* obj1, oopDesc* obj2, size_t length))
+  ShenandoahBarrierSet::barrier_set()->arraycopy_pre_barrier_mutator(obj1, obj2, length);
+JRT_END
+
 // Shenandoah clone barrier: makes sure that references point to to-space
 // in cloned objects.
 JRT_LEAF(void, ShenandoahRuntime::shenandoah_clone_barrier(oopDesc* src))

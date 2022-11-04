@@ -42,6 +42,9 @@
 #include "runtime/sharedRuntime.hpp"
 #include "vmreg_x86.inline.hpp"
 
+#include "gc/shenandoah/shenandoahRuntime.hpp"
+#include "gc/shenandoah/c1/shenandoahBarrierSetC1.hpp"
+
 
 // These masks are used to provide 128-bit aligned bitmasks to the XMM
 // instructions, to allow sign-masking or sign-bit flipping.  They allow
@@ -3060,6 +3063,16 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   BasicType basic_type = default_type != NULL ? default_type->element_type()->basic_type() : T_ILLEGAL;
   if (basic_type == T_ARRAY) basic_type = T_OBJECT;
 
+  if (UseShenandoahGC) {
+
+    ShenandoahBarrierSetC1* bs = (ShenandoahBarrierSetC1*)BarrierSet::barrier_set()->barrier_set_c1();
+
+    store_parameter(src, 0);
+    store_parameter(dst, 1);
+    store_parameter(length, 2);
+    __ call(RuntimeAddress(bs->array_access_pre_barrier_rt_code_blob()->code_begin()));
+
+  }
   // if we don't know anything, just go through the generic arraycopy
   if (default_type == NULL) {
     Label done;
@@ -3082,6 +3095,8 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
 
     address copyfunc_addr = StubRoutines::generic_arraycopy();
     assert(copyfunc_addr != NULL, "generic arraycopy stub required");
+
+    // dat note call vm to increment ac of array here
 
     // pass arguments: may push as this is not a safepoint; SP must be fix at each safepoint
 #ifdef _LP64

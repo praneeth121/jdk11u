@@ -90,51 +90,141 @@ markOop* oopDesc::mark_addr_raw() const {
   return (markOop*) &_mark;
 }
 
-void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){
-  assert(!is_remote_oop((void*) mem), "Should not be remote oop");
-  *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = (size_t) new_value;
-}
+// void oopDesc::set_access_counter(HeapWord* mem, size_t new_value){
+//   // assert(!is_remote_oop((void*) mem), "Should not be remote oop");
+//   // *(size_t*)(((char*)mem) + access_counter_offset_in_bytes()) = (size_t) new_value;
+//   set_hotness_field(mem, hotness_field(mem)->set_access_counter(new_value));
+// }
 
-void oopDesc::set_access_counter(size_t new_value) {
-  // uintptr_t val = (uintptr_t)new_value;
-  if (is_remote_oop()) {
-    tty->print_cr("set_mark_raw");
+// void oopDesc::set_access_counter(size_t new_value) {
+//   // assert(false, "Should not call this");
+//   set_access_counter((HeapWord*)this, new_value);
+  // if (is_remote_oop()) {
+  //   tty->print_cr("set_mark_raw");
+  //   RemoteMem* r_mem = Universe::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in_evac_set((void*)this)) {
+  //     void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+  //     assert(buffering_addr, "remote addr must not be null");
+  //     oop buffering_oop = oop(buffering_addr);
+  //     tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+  //     HeapAccess<MO_VOLATILE>::store_at(buffering_oop, access_counter_offset_in_bytes(), new_value);
+  //   }
+  //   assert(false, "We are not here yet");
+  //   r_mem->write((char*) this + access_counter_offset_in_bytes(), (char*)&new_value, sizeof(size_t));
+  //   return;
+  // }
+  // HeapAccess<MO_VOLATILE>::store_at(as_oop(), access_counter_offset_in_bytes(), new_value);
+// }
+
+// void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){
+//   // assert(!is_remote_oop((void*) mem), "Should not be remote oop");
+//   // *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = (size_t) new_value;
+//   set_hotness_field(mem, hotness_field(mem)->set_gc_epoch(new_value));
+// }
+
+void oopDesc::set_trampoline_ref(HeapWord* mem, int new_value){
+  // assert(!is_remote_oop((void*) mem), "Should not be remote oop");
+  // *(uintptr_t*)(((char*)mem) + tramp_ref_offset_in_bytes()) = (uintptr_t) new_value;
+
+  if (is_remote_oop(mem)) {
     RemoteMem* r_mem = Universe::heap()->remote_mem();
     assert(r_mem, "remote mem must be init");
-    if (r_mem->is_in_evac_set((void*)this)) {
-      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+    if (r_mem->is_in_evac_set((oop)(void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
       assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
-      tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
-      return HeapAccess<MO_VOLATILE>::store_at(buffering_oop, access_counter_offset_in_bytes(), new_value);
+      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
+      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+      buffering_oop->set_hotness_field(buffering_oop->hotness_field()->set_trampoline_ref((size_t)new_value));
+      return;
     }
-    assert(false, "We are not here yet");
-    r_mem->write((char*) this + access_counter_offset_in_bytes(), (char*)&new_value, sizeof(size_t));
-    return;
+    assert(false, "Fully remote oop should not reach here, only buffering oop is allowed");
   }
-  HeapAccess<MO_VOLATILE>::store_at(as_oop(), access_counter_offset_in_bytes(), new_value);
+  set_hotness_field(mem, hotness_field(mem)->set_trampoline_ref((size_t)new_value));
 }
+
+void oopDesc::set_trampoline_ref(int new_value) {
+  // HeapAccess<MO_VOLATILE>::store_at(as_oop(), tramp_ref_offset_in_bytes(), (uintptr_t)new_value);
+  // if this is remote, resolve for buffering oop and sent tramp ref there.
+  // assert that this is not a non-buffering remote oop
+  // assert(new_value != 0, "0 is invalid value");
+  set_trampoline_ref((HeapWord*)this, new_value);
+}
+
+// void oopDesc::set_gc_epoch(size_t new_value) {
+//   _hotness_field->set_gc_epoch_raw(new_value);
+  // uintptr_t val = (uintptr_t)new_value;
+  // if (is_remote_oop()) {
+  //   tty->print_cr("set_mark_raw");
+  //   RemoteMem* r_mem = Universe::heap()->remote_mem();
+  //   assert(r_mem, "remote mem must be init");
+  //   if (r_mem->is_in_evac_set((void*)this)) {
+  //     void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+  //     assert(buffering_addr, "remote addr must not be null");
+  //     oop buffering_oop = oop(buffering_addr);
+  //     tty->print_cr("set_mark_raw: Remote obj %p, buffering at %p, klass %p", (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
+  //     return HeapAccess<MO_VOLATILE>::store_at(buffering_oop, gc_epoch_offset_in_bytes(), new_value);
+  //   }
+  //   assert(false, "We are not here yet");
+  //   r_mem->write((char*) this + gc_epoch_offset_in_bytes(), (char*)&new_value, sizeof(size_t));
+  //   return;
+  // }
+  // HeapAccess<MO_VOLATILE>::store_at(as_oop(), gc_epoch_offset_in_bytes(), new_value);
+// }
 
 size_t oopDesc::increase_access_counter() {
   // increase_access_counter(this);
-  size_t ac = access_counter();
-  ac += 1;
-  set_access_counter(ac);
-  return ac;
+  // size_t ac = access_counter();
+  // size_t ge = gc_epoch();
+
+  // if (ge == oopDesc::static_gc_epoch) {
+  //   ac += 1;
+  //   set_access_counter(ac);
+  // } else {
+  //   assert(ge < oopDesc::static_gc_epoch, "sanity");
+  //   ac = 0;
+  //   set_access_counter(ac);
+  //   set_gc_epoch(oopDesc::static_gc_epoch);
+  // }
+  // return ac;
+
+  // return increase_access_counter((HeapWord*)this);
+  hotnessField old_hf = NULL;
+  hotnessField new_hf = NULL;
+  bool success = false;
+  while (!success) {
+    // old_hf = hotness_field_raw();
+    old_hf = hotness_field();
+    new_hf = old_hf->increase_access_counter();
+    hotnessField prev = cas_set_hotness_field_raw(new_hf, old_hf);
+    success = prev == old_hf;
+  }
+  return new_hf->access_counter();
 }
 
-void oopDesc::increase_access_counter(HeapWord* mem) {
-  oop obj = oop(mem);
-  size_t ac = obj->access_counter();
-  ac += 1;
-  obj->set_access_counter(mem, ac);
+size_t oopDesc::increase_access_counter(size_t increment) {
+  hotnessField old_hf = NULL;
+  hotnessField new_hf = NULL;
+  bool success = false;
+  while (!success) {
+    // old_hf = hotness_field_raw();
+    old_hf = hotness_field();
+    new_hf = old_hf->increase_access_counter(increment);
+    hotnessField prev = cas_set_hotness_field_raw(new_hf, old_hf);
+    success = prev == old_hf;
+  }
+  return new_hf->access_counter();
 
 }
 
-void oopDesc::set_gc_epoch(HeapWord* mem, size_t new_value){
-  assert(!is_remote_oop((void*) mem), "Must not be remote oop");
-  *(size_t*)(((char*)mem) + gc_epoch_offset_in_bytes()) = (size_t)new_value;
-}
+// size_t oopDesc::increase_access_counter(HeapWord* mem) {
+//   // dat doto: maybe put a one-bit lock to ensure atomic increment
+//   set_hotness_field (mem, hotness_field(mem)->increase_access_counter());
+//   return hotness_field(mem)->access_counter();
+
+//   hotnessField old = hotness_field(mem);
+// }
 
 void oopDesc::set_mark(volatile markOop m) {
   if (is_remote_oop()) {
@@ -233,25 +323,142 @@ void oopDesc::init_mark_raw() {
   set_mark_raw(markOopDesc::prototype_for_object(this));
 }
 
-size_t oopDesc::access_counter() const {
-  if (is_remote_oop()) {
+
+hotnessField oopDesc::hotness_field(void* mem) {
+  if (is_remote_oop(mem)) {
     RemoteMem* r_mem = Universe::heap()->remote_mem();
     assert(r_mem, "remote mem must be init");
-    if (r_mem->is_in_evac_set((oop)(void*)this)) {
-      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
+    if (r_mem->is_in_evac_set((oop)(void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
       assert(buffering_addr, "remote addr must not be null");
       oop buffering_oop = oop(buffering_addr);
-      // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 
-      //           (void*)this, buffering_addr, buffering_oop->klass_or_null_local());
       
-      return HeapAccess<MO_VOLATILE>::load_at(buffering_oop, access_counter_offset_in_bytes());
+      return HeapAccess<MO_VOLATILE>::load_at(buffering_oop, hotness_field_offset_in_bytes());
     }
-    assert(false, "Mark: not handling this yet");
-    size_t ret;
-    r_mem->read((char*)this + access_counter_offset_in_bytes(), (char*)&ret, sizeof(size_t));
+    assert(false, "hotness_field: not handling this yet");
+    hotnessField ret;
+    r_mem->read((char*)mem + hotness_field_offset_in_bytes(), (char*)&ret, sizeof(size_t));
     return ret;
   }
-  return HeapAccess<MO_VOLATILE>::load_at(as_oop(), access_counter_offset_in_bytes());
+  return HeapAccess<MO_VOLATILE>::load_at(oop(mem), hotness_field_offset_in_bytes());
+}
+
+// hotnessField oopDesc::hotness_field_raw(void* mem) {
+//   return *((HeapWord*)mem + hotness_field_offset_in_bytes());
+// }
+
+hotnessField oopDesc::hotness_field_raw() {
+  return _hotness_field;
+}
+
+hotnessField oopDesc::hotness_field() {
+  return hotness_field(this);
+}
+
+void oopDesc::set_hotness_field(HeapWord* mem, hotnessField hf) {
+  if (is_remote_oop(mem)) {
+    tty->print_cr("set_mark_raw");
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    if (r_mem->is_in_evac_set((void*)mem)) {
+      void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)mem);
+      assert(buffering_addr, "remote addr must not be null");
+      oop buffering_oop = oop(buffering_addr);
+      HeapAccess<MO_VOLATILE>::store_at(buffering_oop, hotness_field_offset_in_bytes(), hf);
+    }
+    assert(false, "We are not here yet");
+    r_mem->write((char*) mem + hotness_field_offset_in_bytes(), (char*)&hf, sizeof(size_t));
+    return;
+  }
+  HeapAccess<MO_VOLATILE>::store_at(oop(mem), hotness_field_offset_in_bytes(), hf);
+}
+
+void oopDesc::set_hotness_field(hotnessField hf) {
+  set_hotness_field((HeapWord*)this, hf);
+}
+
+hotnessField oopDesc::cas_set_hotness_field(hotnessField new_hf, hotnessField old_hf) {
+  if (is_remote_oop()) {
+    assert(false, "Handle");
+    // tty->print_cr("markOop size = %lu, should be <= 8 bytes", sizeof(markOop));
+    // oopDesc header = Universe::heap()->remote_mem()->read_obj_header((void*)this);
+    // markOop current_mark = header.mark_raw();
+    // if (memcmp(&current_mark, &old_mark, sizeof(markOop)) == 0) {
+    //   // current equals to old, store new
+    //   header.set_mark_raw(new_mark);
+    //   Universe::heap()->remote_mem()->write_obj_header(header, (void*)this);
+    // }
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    return (hotnessField)(void*) r_mem->remote_cas((char*)this + hotness_field_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_hf), reinterpret_cast<uintptr_t>(new_hf));
+    // return header.mark_raw();
+  }
+  return HeapAccess<>::atomic_cmpxchg_at(new_hf, as_oop(), hotness_field_offset_in_bytes(), old_hf);
+}
+
+hotnessField oopDesc::cas_set_hotness_field_raw(hotnessField new_hf, hotnessField old_hf, atomic_memory_order order) {
+  if (is_remote_oop()) {
+    assert(false, "handle");
+    // tty->print_cr("markOop size = %lu, should be <= 8 bytes", sizeof(markOop));
+    RemoteMem* r_mem = Universe::heap()->remote_mem();
+    assert(r_mem, "remote mem must be init");
+    return (hotnessField)(void*) r_mem->remote_cas(((char*)this) + hotness_field_offset_in_bytes(), reinterpret_cast<uintptr_t>(old_hf), reinterpret_cast<uintptr_t>(new_hf));
+  }
+  return Atomic::cmpxchg(new_hf, &_hotness_field, old_hf, order);
+}
+
+
+void oopDesc::set_cross_server_pointee() {
+  // cas for thread sync
+
+  // set_hotness_field(hotness_field()->set_cross_server_pointee());
+
+  hotnessField old_hf = NULL;
+  hotnessField new_hf = NULL;
+  bool success = false;
+  while (!success) {
+    old_hf = hotness_field_raw();
+    new_hf = old_hf->set_cross_server_pointee();
+    hotnessField prev = cas_set_hotness_field_raw(new_hf, old_hf);
+    success = prev == old_hf;
+  }
+}
+
+bool oopDesc::is_cross_server_pointee()  {
+  return hotness_field()->is_cross_server_pointee();
+}
+
+size_t oopDesc::access_counter(void* mem) {
+  return hotness_field(mem)->access_counter();
+}
+
+// size_t oopDesc::true_access_counter(void* mem) {
+//   return _hotness_field->access_counter();
+//   // return hotness_field(mem)->access_counter_resolved();
+// }
+
+size_t oopDesc::access_counter() {
+  return hotness_field()->access_counter();
+}
+
+size_t oopDesc::gc_epoch(void* mem) {
+  return hotness_field(mem)->gc_epoch();
+}
+
+size_t oopDesc::gc_epoch() {
+  return hotness_field()->gc_epoch();
+}
+
+size_t oopDesc::trampoline_ref(void* mem) {
+  // must be local oop
+  return hotness_field(mem)->trampoline_ref();
+}
+
+
+size_t oopDesc::trampoline_ref() {
+  // must be local oop
+
+  return hotness_field()->trampoline_ref();
 }
 
 Klass* oopDesc::klass() const {
@@ -550,7 +757,7 @@ int oopDesc::size_given_klass(Klass* klass)  {
         RemoteMem* r_mem = Universe::heap()->remote_mem();
         assert(r_mem, "remote mem must be init");
         if (r_mem->is_in_evac_set(this)) {
-          tty->print_cr("Buffered remote");
+          // tty->print_cr("Buffered remote");
           void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
           assert(buffering_addr, "remote addr must not be null");
           // tty->print_cr("Reading from remote oop %p, buffering at %p, klass %p, name %s", this, buffering_addr,klass, klass->external_name());
@@ -623,8 +830,7 @@ void*    oopDesc::field_addr(int offset)         const { return Access<>::resolv
 
 template <class T>
 T*       oopDesc::obj_field_addr_raw(int offset) const {
-  // Dat TODO
-  // check for remote field load here ----------------------------
+  // if (is_remote_oop()) assert(false, "check for remote field load here");
   return (T*) field_addr_raw(offset);
 }
 
@@ -700,6 +906,27 @@ bool oopDesc::is_remote_oop(void* mem) {
 bool oopDesc::is_remote_oop() const {
   return is_remote_oop((void*)this);
 }
+
+// check hotness
+
+// bool oopDesc::is_hot_oop(void* mem) {
+//   assert(mem, "must not be null");
+//   // return oopDesc::access_counter_resolved(mem) >= (size_t) hotnessBoundary;
+//   return _hotness_field->true_access_counter()
+//   // return oopDesc::access_counter(mem) >= (size_t) hotnessBoundary;
+
+//   // if (mem == NULL) return false;
+//   // if (!Universe::heap()->remote_mem()) return false;
+//   // assert(Universe::heap()->remote_mem(), "remote mem must be init");
+//   // return Universe::heap()->remote_mem()->is_in((void*)mem);
+// }
+
+bool oopDesc::is_hot_oop() const {
+  // return is_hot_oop((void*)this);
+  assert(!is_remote_oop(), "Sanity");
+  return _hotness_field->access_counter() >= (size_t) hotnessBoundary;
+}
+
 
 // Used by scavengers
 void oopDesc::forward_to(oop p) {

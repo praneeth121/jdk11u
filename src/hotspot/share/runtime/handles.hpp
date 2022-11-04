@@ -66,8 +66,9 @@ class Handle {
   oop* _handle;
 
  protected:
-  oop     obj() const                            { return _handle == NULL ? (oop)NULL : *_handle; }
-  oop     non_null_obj() const                   { assert(_handle != NULL, "resolving NULL handle"); return *_handle; }
+  oop obj() const;
+  oop non_null_obj() const;
+  oop non_null_obj_remotable() const;
 
  public:
   // Constructors
@@ -76,7 +77,7 @@ class Handle {
 
   // General access
   oop     operator () () const                   { return obj(); }
-  oop     operator -> () const                   { return non_null_obj(); }
+  oop     operator -> () const                   { return non_null_obj_remotable(); }
 
   bool operator == (oop o) const                 { return obj() == o; }
   bool operator == (const Handle& h) const       { return obj() == h.obj(); }
@@ -105,6 +106,7 @@ class Handle {
    protected:                                    \
     type##Oop    obj() const                     { return (type##Oop)Handle::obj(); } \
     type##Oop    non_null_obj() const            { return (type##Oop)Handle::non_null_obj(); } \
+    type##Oop    non_null_obj_remotable() const            { return (type##Oop)Handle::non_null_obj_remotable(); } \
                                                  \
    public:                                       \
     /* Constructors */                           \
@@ -113,7 +115,7 @@ class Handle {
     \
     /* Operators for ease of use */              \
     type##Oop    operator () () const            { return obj(); } \
-    type##Oop    operator -> () const            { return non_null_obj(); } \
+    type##Oop    operator -> () const            { return non_null_obj_remotable(); } \
   };
 
 

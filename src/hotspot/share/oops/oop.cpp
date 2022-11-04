@@ -235,7 +235,7 @@ oop oopDesc::operator ->() const {
     if (r_mem->is_in_evac_set((oop)(void*)this)) {
       void* buffering_addr = r_mem->get_corresponding_evac_buffer_address((void*)this);
       assert(buffering_addr, "remote addr must not be null");
-      tty->print_cr("Arrow operation of remote addr");
+      tty->print_cr("Arrow operation of remote addr oopDesc");
       oop buffering_oop = oop(buffering_addr);
       return buffering_oop;
       // tty->print_cr("klass: Remote obj %p, buffering at %p, klass %p", 

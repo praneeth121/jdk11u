@@ -49,6 +49,8 @@ public:
   static void pre_barrier_c1(oopDesc* obj);
   static void pre_barrier_c2(oopDesc* obj);
 
+  static void arraycopy_pre_barrier(oopDesc* obj1, oopDesc* obj2, size_t length);
+
   static void shenandoah_clone_barrier(oopDesc* src);
 };
 

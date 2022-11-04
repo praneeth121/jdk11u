@@ -1174,6 +1174,26 @@ void ShenandoahBarrierSetAssembler::gen_access_pre_barrier_stub(LIR_Assembler* c
   __ jmp(*stub->continuation());
 }
 
+void ShenandoahBarrierSetAssembler::gen_array_access_pre_barrier_stub(LIR_Assembler* ce, ArrayAccessPreBarrierStub* stub) {
+  ShenandoahBarrierSetC1* bs = (ShenandoahBarrierSetC1*)BarrierSet::barrier_set()->barrier_set_c1();
+  __ bind(*stub->entry());
+
+  Register obj1 = stub->obj1()->as_register();
+  Register obj2 = stub->obj2()->as_register();
+  Register length = stub->length()->as_register();
+
+  // Label slow_path;
+
+  // __ bind(slow_path);
+  ce->store_parameter(obj1, 0);
+  ce->store_parameter(obj2, 1);
+  ce->store_parameter(length, 2);
+  // ce->store_parameter(addr, 1);
+  __ call(RuntimeAddress(bs->array_access_pre_barrier_rt_code_blob()->code_begin()));
+
+  __ jmp(*stub->continuation());
+}
+
 #undef __
 
 #define __ sasm->
@@ -1296,6 +1316,54 @@ void ShenandoahBarrierSetAssembler::generate_access_pre_barrier_runtime_stub(Stu
 
   // __ restore_live_registers_except_rax(true);
   __ restore_live_registers(true);
+  __ pop(c_rarg0);
+  __ epilogue();
+}
+
+void ShenandoahBarrierSetAssembler::generate_array_access_pre_barrier_runtime_stub(StubAssembler* sasm) {
+  __ prologue("shenandoah_access_pre_barrier", false);
+  // arg0 and arg1 : object array
+  // arg2 : length of copy
+  __ push(c_rarg0);
+  __ push(c_rarg1);
+  __ push(c_rarg2);
+  __ save_live_registers_no_oop_map(true);
+
+// #ifdef _LP64
+//   __ load_parameter(0, c_rarg0);
+//   // __ load_parameter(1, c_rarg1);
+//   // if (UseCompressedOops) {
+//   //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow), c_rarg0, c_rarg1);
+//   // } else {
+//   //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), c_rarg0, c_rarg1);
+//   // }
+
+//   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier), c_rarg0);
+
+// #else
+//   __ load_parameter(0, rax);
+//   // __ load_parameter(1, rbx);
+//   // __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), rax, rbx);
+//   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::pre_barrier), rax);
+// #endif
+
+
+  __ load_parameter(0, c_rarg0);
+  __ load_parameter(1, c_rarg1);
+  __ load_parameter(2, c_rarg2);
+  // __ load_parameter(1, c_rarg1);
+  // if (UseCompressedOops) {
+  //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_narrow), c_rarg0, c_rarg1);
+  // } else {
+  //   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier), c_rarg0, c_rarg1);
+  // }
+
+  __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::arraycopy_pre_barrier), c_rarg0, c_rarg1, c_rarg2);
+
+  // __ restore_live_registers_except_rax(true);
+  __ restore_live_registers(true);
+  __ pop(c_rarg2);
+  __ pop(c_rarg1);
   __ pop(c_rarg0);
   __ epilogue();
 }

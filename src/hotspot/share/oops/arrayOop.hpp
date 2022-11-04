@@ -105,9 +105,8 @@ class arrayOopDesc : public oopDesc {
 
   // Accessors for instance variable which is not a C++ declared nonstatic
   // field.
-  int length() const {
-    return *(int*)(((intptr_t)this) + length_offset_in_bytes());
-  }
+  inline int length() const;
+  
   void set_length(int length) {
     set_length((HeapWord*)this, length);
   }
