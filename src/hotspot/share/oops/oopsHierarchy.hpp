@@ -41,6 +41,7 @@ typedef juint  narrowKlass;
 
 typedef void* OopOrNarrowOopStar;
 typedef class   markOopDesc*                markOop;
+typedef class   hotnessFieldDesc*           hotnessField;
 
 #ifndef CHECK_UNHANDLED_OOPS
 
