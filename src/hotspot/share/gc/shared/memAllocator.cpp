@@ -409,8 +409,10 @@ oop MemAllocator::finish(HeapWord* mem) const {
   // object zeroing are visible before setting the klass non-NULL, for
   // concurrent collectors.
   oopDesc::release_set_klass(mem, _klass);
-  oopDesc::set_access_counter(mem, 0);
-  oopDesc::set_gc_epoch(mem, 0);
+  // oopDesc::set_access_counter(mem, 0);
+  // oopDesc::set_gc_epoch(mem, 0);
+  oopDesc::set_hotness_field(mem, 0);
+  
   return oop(mem);
 }
 
